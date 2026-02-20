@@ -1,0 +1,66 @@
+"use client"
+
+import { useState } from "react"
+import { TopBar } from "@/components/reservations/top-bar"
+import { HeroStats } from "@/components/reservations/hero-stats"
+import { CapacityBar } from "@/components/reservations/capacity-bar"
+import { UpcomingReservations } from "@/components/reservations/upcoming-reservations"
+import { WaitlistPanel } from "@/components/reservations/waitlist-panel"
+import { TurnTracker } from "@/components/reservations/turn-tracker"
+import { PaceStrip } from "@/components/reservations/pace-strip"
+import {
+  type ServicePeriod,
+  reservations,
+  capacitySlots,
+  getHeroStats,
+} from "@/lib/reservations-data"
+import { Toaster } from "sonner"
+
+export default function ReservationsPage() {
+  const [servicePeriod, setServicePeriod] = useState<ServicePeriod>("dinner")
+  const stats = getHeroStats(reservations)
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      <Toaster
+        theme="dark"
+        toastOptions={{
+          className: "border-zinc-700 bg-zinc-900 text-foreground",
+        }}
+      />
+
+      <TopBar
+        servicePeriod={servicePeriod}
+        onServicePeriodChange={setServicePeriod}
+      />
+
+      <main className="flex flex-1 flex-col gap-5 py-5">
+        {/* Section 1: Hero Stats */}
+        <HeroStats stats={stats} />
+
+        {/* Section 2: Capacity Bar */}
+        <CapacityBar slots={capacitySlots} />
+
+        {/* Section 3: Two-Column Layout */}
+        <section
+          aria-label="Reservations and floor status"
+          className="grid gap-5 px-4 lg:grid-cols-[1fr_400px] lg:px-6"
+        >
+          {/* Left: Upcoming Reservations */}
+          <div className="min-h-[400px]">
+            <UpcomingReservations />
+          </div>
+
+          {/* Right: Waitlist + Turn Tracker stacked */}
+          <div className="flex flex-col gap-5">
+            <WaitlistPanel />
+            <TurnTracker />
+          </div>
+        </section>
+
+        {/* Section 4: Pace Strip */}
+        <PaceStrip />
+      </main>
+    </div>
+  )
+}
