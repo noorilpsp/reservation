@@ -19,11 +19,8 @@ import {
 import { cn } from "@/lib/utils"
 import {
   type TimelineBlock,
-  type GhostBlock,
-  type ZoomLevel,
   zones,
   tableLanes,
-  getBlocksForTable,
   getGhostsForTable,
   getMergedForTable,
   getBlockColor,
@@ -33,21 +30,27 @@ import {
 } from "@/lib/timeline-data"
 
 interface TimelineMobileProps {
+  blocks: TimelineBlock[]
   zoneFilter: string
   onZoneFilterChange: (zone: string) => void
+  partySizeFilter: string
   showGhosts: boolean
   onBlockClick: (block: TimelineBlock) => void
   serviceStart: string
   serviceEnd: string
+  nowTime?: string | null
 }
 
 export function TimelineMobile({
+  blocks,
   zoneFilter,
   onZoneFilterChange,
+  partySizeFilter,
   showGhosts,
   onBlockClick,
   serviceStart,
   serviceEnd,
+  nowTime,
 }: TimelineMobileProps) {
   const toMinutes = (time: string) => {
     const [h, m] = time.split(":").map(Number)
@@ -62,27 +65,56 @@ export function TimelineMobile({
     const endMin = normalize(toMinutes(end))
     return startMin < serviceEndMin && endMin > serviceStartMin
   }
+  const matchesPartyFilter = (partySize: number) => {
+    if (partySizeFilter === "1-2") return partySize <= 2
+    if (partySizeFilter === "3-4") return partySize >= 3 && partySize <= 4
+    if (partySizeFilter === "5-6") return partySize >= 5 && partySize <= 6
+    if (partySizeFilter === "7+") return partySize >= 7
+    return true
+  }
 
-  const filteredTables = zoneFilter === "all"
+  const filteredTables = (zoneFilter === "all"
     ? tableLanes
     : tableLanes.filter((t) => t.zone === zoneFilter)
+  ).filter((table) => {
+    if (partySizeFilter === "all") return true
+    return blocks.some((block) => (
+      block.table === table.id
+      && matchesPartyFilter(block.partySize)
+      && overlapsService(block.startTime, block.endTime)
+    ))
+  })
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const touchStart = useRef<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    setCurrentIndex((prev) => Math.min(prev, Math.max(filteredTables.length - 1, 0)))
+  }, [filteredTables.length])
 
   const currentTable = filteredTables[currentIndex]
-  if (!currentTable) return null
+  if (!currentTable) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
+        <p className="text-sm text-muted-foreground">No tables match this party-size filter.</p>
+      </div>
+    )
+  }
 
-  const blocks = getBlocksForTable(currentTable.id).filter((block) =>
+  const tableBlocks = blocks.filter((block) => block.table === currentTable.id).filter((block) =>
     overlapsService(block.startTime, block.endTime)
-  ).sort((a, b) => {
+  ).filter((block) => matchesPartyFilter(block.partySize)).sort((a, b) => {
     const aMin = parseInt(a.startTime.split(":")[0]) * 60 + parseInt(a.startTime.split(":")[1])
     const bMin = parseInt(b.startTime.split(":")[0]) * 60 + parseInt(b.startTime.split(":")[1])
     return aMin - bMin
   })
   const ghosts = showGhosts
-    ? getGhostsForTable(currentTable.id).filter((ghost) =>
+    ? getGhostsForTable(currentTable.id, {
+      serviceStart,
+      serviceEnd,
+      nowTime,
+      blocks,
+    }).filter((ghost) =>
       overlapsService(ghost.predictedTime, ghost.endTime)
     )
     : []
@@ -182,7 +214,7 @@ export function TimelineMobile({
           </div>
         )}
 
-        {blocks.map((block) => {
+        {tableBlocks.map((block) => {
           const colors = getBlockColor(block.status)
           const statusLabel = getStatusLabel(block)
           const isPast = block.status === "completed"
@@ -312,14 +344,14 @@ export function TimelineMobile({
         ))}
 
         {/* Empty state */}
-        {blocks.length === 0 && ghosts.length === 0 && !merged && (
+        {tableBlocks.length === 0 && ghosts.length === 0 && !merged && (
           <div className="py-12 text-center">
             <p className="text-sm text-muted-foreground">No reservations for this table</p>
             <p className="text-xs text-zinc-600">Table is open all evening</p>
           </div>
         )}
 
-        {blocks.length > 0 && (
+        {tableBlocks.length > 0 && (
           <div className="py-6 text-center">
             <p className="text-xs text-zinc-600">No more reservations</p>
           </div>

@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useState, useEffect, useMemo } from "react"
+import { useCallback, useState, useEffect, useMemo, useRef } from "react"
+import type { PointerEvent as ReactPointerEvent } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import {
   TooltipProvider,
@@ -10,7 +11,6 @@ import {
   type TimelineBlock as TBlock,
   zones,
   getTablesForZone,
-  getBlocksForTable,
   getGhostsForTable,
   getMergedForTable,
   getTimeLabels,
@@ -19,12 +19,15 @@ import {
 import { ReservationBlock, GhostBlockComponent, MergedBlockComponent } from "./timeline-block"
 
 interface TimelineGridProps {
+  blocks: TBlock[]
   zoom: ZoomLevel
   zoneFilter: string
+  partySizeFilter: string
   showGhosts: boolean
   onScrollChange: (scrollLeft: number) => void
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   onBlockClick: (block: TBlock) => void
+  onBlockUpdate: (blockId: string, updates: Pick<TBlock, "table" | "startTime" | "endTime">) => void
   onEmptySlotClick: (payload: { tableId: string; time: string; duration: number; durationMax: number; partySize: number }) => void
   serviceStart: string
   serviceEnd: string
@@ -34,14 +37,18 @@ interface TimelineGridProps {
 const LANE_HEIGHT = 56
 const ZONE_HEADER_HEIGHT = 32
 const TIME_HEADER_HEIGHT = 28
+const SLOT_FEEDBACK_MS = 260
 
 export function TimelineGrid({
+  blocks,
   zoom,
   zoneFilter,
+  partySizeFilter,
   showGhosts,
   onScrollChange,
   scrollContainerRef,
   onBlockClick,
+  onBlockUpdate,
   onEmptySlotClick,
   serviceStart,
   serviceEnd,
@@ -52,6 +59,10 @@ export function TimelineGrid({
   const [viewportWidth, setViewportWidth] = useState(0)
   const [hoveredSlot, setHoveredSlot] = useState<{ tableId: string; index: number } | null>(null)
   const [activeSlot, setActiveSlot] = useState<{ tableId: string; index: number } | null>(null)
+  const [interactionBlockId, setInteractionBlockId] = useState<string | null>(null)
+  const [interactionInvalid, setInteractionInvalid] = useState(false)
+  const [draftOverrides, setDraftOverrides] = useState<Record<string, Pick<TBlock, "table" | "startTime" | "endTime">>>({})
+  const slotFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const toMinutes = (time: string) => {
     const [h, m] = time.split(":").map(Number)
@@ -67,8 +78,8 @@ export function TimelineGrid({
   const timeLabels = getTimeLabels(zoom, serviceStart, serviceEnd)
   const columnCount = Math.max(1, timeLabels.length)
   const slotMinutes = zoom === "1hr" ? 60 : zoom === "30min" ? 30 : 15
-  const clickSlotMinutes = zoom === "1hr" ? 15 : slotMinutes
-  const subSlotsPerColumn = zoom === "1hr" ? 4 : 1
+  const clickSlotMinutes = 15
+  const subSlotsPerColumn = zoom === "1hr" ? 4 : zoom === "30min" ? 2 : 1
   const minSlotWidth = zoom === "1hr" ? 60 : zoom === "30min" ? 46 : 34
   const baseSlotWidth = getSlotWidth(zoom)
   const adaptiveBaseWidth = viewportWidth > 0 ? viewportWidth : columnCount * baseSlotWidth
@@ -79,6 +90,20 @@ export function TimelineGrid({
   let serviceEndMin = toMinutes(serviceEnd)
   if (serviceEndMin <= serviceStartMin) serviceEndMin += 24 * 60
   const normalize = (min: number) => (min < serviceStartMin ? min + 24 * 60 : min)
+  const denormalize = (min: number) => {
+    let next = min
+    while (next >= 24 * 60) next -= 24 * 60
+    while (next < 0) next += 24 * 60
+    return next
+  }
+  const normalizeRange = (startTime: string, endTime: string): { start: number; end: number } => {
+    const startRaw = toMinutes(startTime)
+    const endRaw = toMinutes(endTime)
+    const start = normalize(startRaw)
+    let end = normalize(endRaw)
+    if (end <= start) end += 24 * 60
+    return { start, end }
+  }
   const getSubSlotIndex = (clickX: number) => {
     const totalSubSlots = timeLabels.length * subSlotsPerColumn
     return Math.max(
@@ -86,6 +111,9 @@ export function TimelineGrid({
       Math.min(totalSubSlots - 1, Math.floor(clickX / subSlotWidth))
     )
   }
+  const hoveredColumnIndex = hoveredSlot
+    ? Math.floor(hoveredSlot.index / subSlotsPerColumn)
+    : null
   const nowPixel = useMemo(() => {
     if (!nowTime) return null
     let nowMin = toMinutes(nowTime)
@@ -98,6 +126,13 @@ export function TimelineGrid({
     const endMin = normalize(toMinutes(end))
     return startMin < serviceEndMin && endMin > serviceStartMin
   }
+  const matchesPartyFilter = useCallback((partySize: number) => {
+    if (partySizeFilter === "1-2") return partySize <= 2
+    if (partySizeFilter === "3-4") return partySize >= 3 && partySize <= 4
+    if (partySizeFilter === "5-6") return partySize >= 5 && partySize <= 6
+    if (partySizeFilter === "7+") return partySize >= 7
+    return true
+  }, [partySizeFilter])
 
   const toggleZone = (zoneId: string) => {
     setCollapsedZones((prev) => {
@@ -144,7 +179,301 @@ export function TimelineGrid({
     }
   }, [zoom, nowPixel, scrollContainerRef])
 
+  useEffect(() => {
+    return () => {
+      if (slotFeedbackTimerRef.current) {
+        clearTimeout(slotFeedbackTimerRef.current)
+      }
+    }
+  }, [])
+
+  const flashActiveSlot = useCallback((next: { tableId: string; index: number }) => {
+    setActiveSlot(next)
+    if (slotFeedbackTimerRef.current) {
+      clearTimeout(slotFeedbackTimerRef.current)
+    }
+    slotFeedbackTimerRef.current = setTimeout(() => {
+      setActiveSlot((prev) => (
+        prev && prev.tableId === next.tableId && prev.index === next.index ? null : prev
+      ))
+      slotFeedbackTimerRef.current = null
+    }, SLOT_FEEDBACK_MS)
+  }, [])
+
   const filteredZones = zoneFilter === "all" ? zones : zones.filter(z => z.id === zoneFilter)
+  const displayedBlocks = useMemo(
+    () => blocks.map((block) => {
+      const override = draftOverrides[block.id]
+      return override ? { ...block, ...override } : block
+    }),
+    [blocks, draftOverrides]
+  )
+  const filteredTablesByZone = useMemo(() => {
+    return new Map(
+      filteredZones.map((zone) => {
+        const tables = getTablesForZone(zone.id).filter((table) => {
+          if (partySizeFilter === "all") return true
+          return displayedBlocks.some((block) => (
+            block.table === table.id
+            && matchesPartyFilter(block.partySize)
+            && overlapsService(block.startTime, block.endTime)
+          ))
+        })
+        return [zone.id, tables]
+      })
+    )
+  }, [displayedBlocks, filteredZones, matchesPartyFilter, partySizeFilter])
+  const laneBands = useMemo(() => {
+    let cursor = TIME_HEADER_HEIGHT
+    const bands: Array<{ tableId: string; startY: number; endY: number }> = []
+    filteredZones.forEach((zone) => {
+      cursor += ZONE_HEADER_HEIGHT
+      if (collapsedZones.has(zone.id)) return
+      ;(filteredTablesByZone.get(zone.id) ?? []).forEach((table) => {
+        bands.push({ tableId: table.id, startY: cursor, endY: cursor + LANE_HEIGHT })
+        cursor += LANE_HEIGHT
+      })
+    })
+    return bands
+  }, [collapsedZones, filteredTablesByZone, filteredZones])
+
+  const getTableAtClientY = useCallback((clientY: number): string | null => {
+    const container = scrollContainerRef.current
+    if (!container) return null
+    const rect = container.getBoundingClientRect()
+    const y = clientY - rect.top + container.scrollTop
+    const band = laneBands.find((entry) => y >= entry.startY && y < entry.endY)
+    return band?.tableId ?? null
+  }, [laneBands, scrollContainerRef])
+
+  const getTimelineX = useCallback((clientX: number) => {
+    const container = scrollContainerRef.current
+    if (!container) return 0
+    const rect = container.getBoundingClientRect()
+    return clientX - rect.left + container.scrollLeft
+  }, [scrollContainerRef])
+
+  const hasCollision = useCallback((blockId: string, tableId: string, startMin: number, endMin: number) => {
+    const overlapsBlock = displayedBlocks
+      .filter((block) => block.id !== blockId && block.table === tableId)
+      .some((block) => {
+        const range = normalizeRange(block.startTime, block.endTime)
+        return startMin < range.end && endMin > range.start
+      })
+    if (overlapsBlock) return true
+
+    const merged = getMergedForTable(tableId)
+    if (!merged) return false
+    const mergedRange = normalizeRange(merged.startTime, merged.endTime)
+    return startMin < mergedRange.end && endMin > mergedRange.start
+  }, [displayedBlocks])
+
+  const startMove = useCallback((event: ReactPointerEvent<HTMLDivElement>, block: TBlock) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    const pointerOffsetPx = event.clientX - rect.left
+    const originRange = normalizeRange(block.startTime, block.endTime)
+    const duration = Math.max(15, originRange.end - originRange.start)
+    const minStart = serviceStartMin
+    const maxStart = Math.max(minStart, serviceEndMin - duration)
+    const dragStartX = event.clientX
+    const dragStartY = event.clientY
+    let moved = false
+    let latestInvalid = false
+    let latestDraft: Pick<TBlock, "table" | "startTime" | "endTime"> = {
+      table: block.table,
+      startTime: block.startTime,
+      endTime: block.endTime,
+    }
+
+    setInteractionBlockId(block.id)
+    setInteractionInvalid(false)
+    setDraftOverrides({
+      [block.id]: {
+        table: block.table,
+        startTime: block.startTime,
+        endTime: block.endTime,
+      },
+    })
+
+    const handleMove = (nextEvent: globalThis.PointerEvent) => {
+      const distance = Math.hypot(nextEvent.clientX - dragStartX, nextEvent.clientY - dragStartY)
+      if (distance > 3) moved = true
+      const x = getTimelineX(nextEvent.clientX) - pointerOffsetPx
+      const snappedStart = Math.round((serviceStartMin + (x / subSlotWidth) * clickSlotMinutes - serviceStartMin) / clickSlotMinutes) * clickSlotMinutes + serviceStartMin
+      const proposedStart = Math.max(minStart, Math.min(maxStart, snappedStart))
+      const proposedEnd = proposedStart + duration
+      const tableFromPointer = getTableAtClientY(nextEvent.clientY)
+      const proposedTable = tableFromPointer ?? block.table
+      const invalid = hasCollision(block.id, proposedTable, proposedStart, proposedEnd)
+      latestInvalid = invalid
+      latestDraft = {
+        table: proposedTable,
+        startTime: toTime24(denormalize(proposedStart)),
+        endTime: toTime24(denormalize(proposedEnd)),
+      }
+
+      setInteractionInvalid(invalid)
+      setDraftOverrides({
+        [block.id]: latestDraft,
+      })
+    }
+
+    const finish = () => {
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", handleUp)
+      window.removeEventListener("pointercancel", handleCancel)
+
+      const nextStart = normalize(toMinutes(latestDraft.startTime))
+      const nextEnd = normalizeRange(latestDraft.startTime, latestDraft.endTime).end
+      const nextTable = latestDraft.table
+
+      if (!moved) {
+        setDraftOverrides({})
+        setInteractionBlockId(null)
+        setInteractionInvalid(false)
+        onBlockClick(block)
+        return
+      }
+
+      if (!latestInvalid && !hasCollision(block.id, nextTable, nextStart, nextEnd)) {
+        onBlockUpdate(block.id, {
+          table: nextTable,
+          startTime: toTime24(denormalize(nextStart)),
+          endTime: toTime24(denormalize(nextEnd)),
+        })
+      }
+
+      setDraftOverrides({})
+      setInteractionBlockId(null)
+      setInteractionInvalid(false)
+    }
+
+    const handleUp = () => {
+      finish()
+    }
+
+    const handleCancel = () => {
+      setDraftOverrides({})
+      setInteractionBlockId(null)
+      setInteractionInvalid(false)
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", handleUp)
+      window.removeEventListener("pointercancel", handleCancel)
+    }
+
+    window.addEventListener("pointermove", handleMove)
+    window.addEventListener("pointerup", handleUp)
+    window.addEventListener("pointercancel", handleCancel)
+  }, [
+    clickSlotMinutes,
+    denormalize,
+    getTableAtClientY,
+    getTimelineX,
+    hasCollision,
+    normalize,
+    normalizeRange,
+    onBlockClick,
+    onBlockUpdate,
+    serviceEndMin,
+    serviceStartMin,
+    subSlotWidth,
+    toTime24,
+  ])
+
+  const startResize = useCallback((event: ReactPointerEvent<HTMLDivElement>, block: TBlock) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    const originRange = normalizeRange(block.startTime, block.endTime)
+    const minEnd = originRange.start + 15
+    const blocksOnTable = displayedBlocks
+      .filter((entry) => entry.id !== block.id && entry.table === block.table)
+      .map((entry) => normalizeRange(entry.startTime, entry.endTime))
+    const nextNeighbor = blocksOnTable
+      .map((entry) => entry.start)
+      .filter((start) => start >= originRange.end)
+      .sort((a, b) => a - b)[0]
+    const merged = getMergedForTable(block.table)
+    const mergedStart = merged ? normalizeRange(merged.startTime, merged.endTime).start : undefined
+    const maxByNeighbor = Math.min(
+      nextNeighbor ?? serviceEndMin,
+      mergedStart ?? serviceEndMin,
+      serviceEndMin
+    )
+    const maxEnd = Math.max(minEnd, maxByNeighbor)
+    const startClientX = event.clientX
+    let latestDraft: Pick<TBlock, "table" | "startTime" | "endTime"> = {
+      table: block.table,
+      startTime: block.startTime,
+      endTime: block.endTime,
+    }
+
+    setInteractionBlockId(block.id)
+    setInteractionInvalid(false)
+    setDraftOverrides({
+      [block.id]: {
+        table: block.table,
+        startTime: block.startTime,
+        endTime: block.endTime,
+      },
+    })
+
+    const handleMove = (nextEvent: globalThis.PointerEvent) => {
+      const deltaPx = nextEvent.clientX - startClientX
+      const deltaSlots = Math.round(deltaPx / subSlotWidth)
+      const deltaMinutes = deltaSlots * clickSlotMinutes
+      const proposedEnd = Math.max(minEnd, Math.min(maxEnd, originRange.end + deltaMinutes))
+      latestDraft = {
+        table: block.table,
+        startTime: block.startTime,
+        endTime: toTime24(denormalize(proposedEnd)),
+      }
+      setDraftOverrides({
+        [block.id]: latestDraft,
+      })
+    }
+
+    const handleUp = () => {
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", handleUp)
+      window.removeEventListener("pointercancel", handleCancel)
+      if (latestDraft.endTime !== block.endTime) {
+        onBlockUpdate(block.id, {
+          table: block.table,
+          startTime: block.startTime,
+          endTime: latestDraft.endTime,
+        })
+      }
+      setDraftOverrides({})
+      setInteractionBlockId(null)
+      setInteractionInvalid(false)
+    }
+
+    const handleCancel = () => {
+      setDraftOverrides({})
+      setInteractionBlockId(null)
+      setInteractionInvalid(false)
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", handleUp)
+      window.removeEventListener("pointercancel", handleCancel)
+    }
+
+    window.addEventListener("pointermove", handleMove)
+    window.addEventListener("pointerup", handleUp)
+    window.addEventListener("pointercancel", handleCancel)
+  }, [
+    clickSlotMinutes,
+    denormalize,
+    displayedBlocks,
+    normalizeRange,
+    onBlockUpdate,
+    serviceEndMin,
+    subSlotWidth,
+    toTime24,
+  ])
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -163,7 +492,7 @@ export function TimelineGrid({
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <div style={{ transform: `translateY(-${scrollTop}px)` }}>
               {filteredZones.map((zone) => {
-                const tables = getTablesForZone(zone.id)
+                const tables = filteredTablesByZone.get(zone.id) ?? []
                 const isCollapsed = collapsedZones.has(zone.id)
 
                 return (
@@ -186,16 +515,24 @@ export function TimelineGrid({
                     </button>
 
                     {/* Table rows */}
-                    {!isCollapsed && tables.map((table) => (
-                      <div
-                        key={table.id}
-                        className="flex items-center border-b border-zinc-800/20 px-3"
-                        style={{ height: LANE_HEIGHT }}
-                      >
-                        <span className="text-xs font-semibold text-foreground">{table.label}</span>
-                        <span className="ml-1.5 text-[10px] text-muted-foreground">{table.seats}p</span>
-                      </div>
-                    ))}
+                    {!isCollapsed && tables.map((table) => {
+                      const isTableFocused = hoveredSlot?.tableId === table.id || activeSlot?.tableId === table.id
+
+                      return (
+                        <div
+                          key={table.id}
+                          className="flex items-center border-b border-zinc-800/20 px-3"
+                          style={{ height: LANE_HEIGHT }}
+                        >
+                          <span className={`text-xs font-semibold transition-colors ${isTableFocused ? "text-emerald-300" : "text-foreground"}`}>
+                            {table.label}
+                          </span>
+                          <span className={`ml-1.5 text-[10px] transition-colors ${isTableFocused ? "text-emerald-400/90" : "text-muted-foreground"}`}>
+                            {table.seats}p
+                          </span>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -218,7 +555,11 @@ export function TimelineGrid({
               {timeLabels.map((label, i) => (
                 <div
                   key={`tl-${i}`}
-                  className="absolute top-1.5 text-[10px] tabular-nums text-muted-foreground"
+                  className={`absolute top-1.5 text-[10px] tabular-nums ${
+                    hoveredColumnIndex === i
+                      ? "text-emerald-300"
+                      : "text-muted-foreground"
+                  }`}
                   style={{ left: i * slotWidth }}
                 >
                   <span className="whitespace-nowrap">{label}</span>
@@ -234,8 +575,8 @@ export function TimelineGrid({
                 style={{ top: TIME_HEADER_HEIGHT, left: i * slotWidth, height: `calc(100% - ${TIME_HEADER_HEIGHT}px)` }}
               />
             ))}
-            {zoom === "1hr" && Array.from({ length: timeLabels.length * 4 - 1 }, (_, i) => i + 1)
-              .filter((i) => i % 4 !== 0)
+            {(zoom === "1hr" || zoom === "30min") && Array.from({ length: timeLabels.length * subSlotsPerColumn - 1 }, (_, i) => i + 1)
+              .filter((i) => i % subSlotsPerColumn !== 0)
               .map((i) => (
                 <div
                   key={`sub-grid-${i}`}
@@ -266,7 +607,7 @@ export function TimelineGrid({
 
             {/* Zone + table lanes */}
             {filteredZones.map((zone) => {
-              const tables = getTablesForZone(zone.id)
+              const tables = filteredTablesByZone.get(zone.id) ?? []
               const isCollapsed = collapsedZones.has(zone.id)
 
               return (
@@ -293,10 +634,16 @@ export function TimelineGrid({
 
                   {/* Table lanes */}
                   {!isCollapsed && tables.map((table) => {
-                    const blocks = getBlocksForTable(table.id).filter((block) =>
+                    const laneBlocksAll = displayedBlocks.filter((block) => block.table === table.id).filter((block) =>
                       overlapsService(block.startTime, block.endTime)
                     )
-                    const ghosts = getGhostsForTable(table.id).filter((ghost) =>
+                    const laneBlocks = laneBlocksAll.filter((block) => matchesPartyFilter(block.partySize))
+                    const ghosts = getGhostsForTable(table.id, {
+                      serviceStart,
+                      serviceEnd,
+                      nowTime,
+                      blocks: displayedBlocks,
+                    }).filter((ghost) =>
                       overlapsService(ghost.predictedTime, ghost.endTime)
                     )
                     const mergedRaw = getMergedForTable(table.id)
@@ -320,7 +667,7 @@ export function TimelineGrid({
                           <>
                             {activeSlot?.tableId === table.id && (
                               <div
-                                className="absolute inset-y-0 bg-cyan-400/15 ring-1 ring-cyan-300/40 pointer-events-none"
+                                className="absolute inset-y-0 bg-cyan-400/15 pointer-events-none"
                                 style={{
                                   left: activeSlot.index * subSlotWidth,
                                   width: subSlotWidth,
@@ -329,7 +676,7 @@ export function TimelineGrid({
                             )}
                             {hoveredSlot?.tableId === table.id && (
                               <div
-                                className="absolute inset-y-0 bg-emerald-400/10 ring-1 ring-emerald-300/35 pointer-events-none"
+                                className="absolute inset-y-0 bg-emerald-400/10 pointer-events-none"
                                 style={{
                                   left: hoveredSlot.index * subSlotWidth,
                                   width: subSlotWidth,
@@ -343,6 +690,7 @@ export function TimelineGrid({
                         <div
                           className="absolute inset-0 cursor-cell hover:bg-emerald-500/[0.03] transition-colors duration-150"
                           onMouseMove={(event) => {
+                            if (interactionBlockId) return
                             const rect = event.currentTarget.getBoundingClientRect()
                             const clickX = event.clientX - rect.left
                             setHoveredSlot({ tableId: table.id, index: getSubSlotIndex(clickX) })
@@ -351,13 +699,14 @@ export function TimelineGrid({
                             setHoveredSlot((prev) => (prev?.tableId === table.id ? null : prev))
                           }}
                           onClick={(event) => {
+                            if (interactionBlockId) return
                             const rect = event.currentTarget.getBoundingClientRect()
                             const clickX = event.clientX - rect.left
                             const subSlotIndex = getSubSlotIndex(clickX)
-                            setActiveSlot({ tableId: table.id, index: subSlotIndex })
+                            flashActiveSlot({ tableId: table.id, index: subSlotIndex })
                             const selectedTime = toTime24(serviceStartMin + subSlotIndex * clickSlotMinutes)
                             const selectedMin = normalize(toMinutes(selectedTime))
-                            const nextBlockStartMin = blocks
+                            const nextBlockStartMin = laneBlocksAll
                               .map((block) => normalize(toMinutes(block.startTime)))
                               .filter((startMin) => startMin > selectedMin)
                               .sort((a, b) => a - b)[0]
@@ -388,13 +737,17 @@ export function TimelineGrid({
                         )}
 
                         {/* Reservation blocks */}
-                        {blocks.map((block) => (
+                        {laneBlocks.map((block) => (
                           <ReservationBlock
                             key={block.id}
                             block={block}
                             zoom={zoom}
                             slotWidth={slotWidth}
                             onClick={onBlockClick}
+                            onDragStart={startMove}
+                            onResizeStart={startResize}
+                            isGhosted={interactionBlockId === block.id}
+                            isInvalidDrop={interactionBlockId === block.id && interactionInvalid}
                             axisStart={serviceStart}
                           />
                         ))}

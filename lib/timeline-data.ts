@@ -66,6 +66,13 @@ export interface TableLane {
   zone: "main" | "patio" | "private"
 }
 
+interface GhostQueryOptions {
+  serviceStart?: string
+  serviceEnd?: string
+  nowTime?: string | null
+  blocks?: TimelineBlock[]
+}
+
 // ── Table Definitions ────────────────────────────────────────────────────────
 
 export const tableLanes: TableLane[] = [
@@ -517,12 +524,169 @@ export const mergedBlocks: MergedBlock[] = [
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-export function getBlocksForTable(tableId: string): TimelineBlock[] {
-  return timelineBlocks.filter((b) => b.table === tableId)
+let nonOverlappingBlocksCache: Map<string, TimelineBlock[]> | null = null
+
+function buildNonOverlappingBlocksCache(): Map<string, TimelineBlock[]> {
+  const cache = new Map<string, TimelineBlock[]>()
+  const tableIds = Array.from(new Set(timelineBlocks.map((block) => block.table)))
+
+  for (const tableId of tableIds) {
+    const tableBlocks = timelineBlocks.filter((block) => block.table === tableId)
+    const rawStarts = tableBlocks.map((block) => parseTimeToMinutes(block.startTime))
+    const anchorStart = rawStarts.length > 0 ? Math.min(...rawStarts) : 0
+
+    const normalized = tableBlocks
+      .map((block) => {
+        const start = parseTimeToMinutes(block.startTime)
+        const end = parseTimeToMinutes(block.endTime)
+        const window = normalizeWindow(start, end, anchorStart)
+        if (!window) return null
+        return { block, start: window.start, end: window.end }
+      })
+      .filter((item): item is { block: TimelineBlock; start: number; end: number } => item !== null)
+      .sort((a, b) => a.start - b.start || a.end - b.end || a.block.id.localeCompare(b.block.id))
+
+    let lastEnd = Number.NEGATIVE_INFINITY
+    const sanitized = normalized.map(({ block, start, end }) => {
+      const adjustedStart = Math.max(start, lastEnd)
+      const adjustedEnd = Math.max(end, adjustedStart + 15)
+      lastEnd = adjustedEnd
+
+      return {
+        ...block,
+        startTime: toTime24(adjustedStart),
+        endTime: toTime24(adjustedEnd),
+      }
+    })
+
+    cache.set(tableId, sanitized)
+  }
+
+  return cache
 }
 
-export function getGhostsForTable(tableId: string): GhostBlock[] {
-  return ghostBlocks.filter((g) => g.table === tableId)
+function getNonOverlappingBlocksCache(): Map<string, TimelineBlock[]> {
+  if (!nonOverlappingBlocksCache) {
+    nonOverlappingBlocksCache = buildNonOverlappingBlocksCache()
+  }
+  return nonOverlappingBlocksCache
+}
+
+export function getBlocksForTable(tableId: string): TimelineBlock[] {
+  return getNonOverlappingBlocksCache().get(tableId) ?? []
+}
+
+export function getTimelineBlocksNoOverlap(): TimelineBlock[] {
+  return Array.from(getNonOverlappingBlocksCache().values()).flat()
+}
+
+export function getGhostsForTable(tableId: string, options?: GhostQueryOptions): GhostBlock[] {
+  return getGhostsForTableWithinService(tableId, options)
+}
+
+function toTime24(totalMinutes: number): string {
+  const normalized = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60)
+  const h = Math.floor(normalized / 60).toString().padStart(2, "0")
+  const m = (normalized % 60).toString().padStart(2, "0")
+  return `${h}:${m}`
+}
+
+function normalizeWindow(start: number, end: number, anchorStart: number): { start: number; end: number } | null {
+  let normalizedStart = start
+  let normalizedEnd = end
+  if (normalizedEnd <= normalizedStart) normalizedEnd += 24 * 60
+  while (normalizedEnd <= anchorStart) {
+    normalizedStart += 24 * 60
+    normalizedEnd += 24 * 60
+  }
+  if (normalizedEnd <= normalizedStart) return null
+  return { start: normalizedStart, end: normalizedEnd }
+}
+
+export function getGhostsForTableWithinService(
+  tableId: string,
+  options?: GhostQueryOptions
+): GhostBlock[] {
+  const serviceStart = options?.serviceStart ?? DINNER_START
+  const serviceEnd = options?.serviceEnd ?? DINNER_END
+  const { startMin: serviceStartMin, endMin: serviceEndMin } = getRangeBounds(serviceStart, serviceEnd)
+
+  const windows: Array<{ start: number; end: number }> = []
+
+  const sourceBlocks = options?.blocks
+    ? options.blocks.filter((block) => block.table === tableId)
+    : getBlocksForTable(tableId)
+
+  for (const block of sourceBlocks) {
+    const startMin = parseTimeToMinutes(block.startTime)
+    const endMin = parseTimeToMinutes(block.endTime)
+    const normalized = normalizeWindow(startMin, endMin, serviceStartMin)
+    if (!normalized) continue
+    const clampedStart = Math.max(normalized.start, serviceStartMin)
+    const clampedEnd = Math.min(normalized.end, serviceEndMin)
+    if (clampedEnd > clampedStart) {
+      windows.push({ start: clampedStart, end: clampedEnd })
+    }
+  }
+
+  const merged = getMergedForTable(tableId)
+  if (merged) {
+    const mergedStart = parseTimeToMinutes(merged.startTime)
+    const mergedEnd = parseTimeToMinutes(merged.endTime)
+    const normalizedMerged = normalizeWindow(mergedStart, mergedEnd, serviceStartMin)
+    if (normalizedMerged) {
+      const clampedStart = Math.max(normalizedMerged.start, serviceStartMin)
+      const clampedEnd = Math.min(normalizedMerged.end, serviceEndMin)
+      if (clampedEnd > clampedStart) {
+        windows.push({ start: clampedStart, end: clampedEnd })
+      }
+    }
+  }
+
+  if (windows.length === 0) return []
+
+  const sorted = [...windows].sort((a, b) => a.start - b.start || a.end - b.end)
+  const mergedWindows = sorted.reduce<Array<{ start: number; end: number }>>((acc, current) => {
+    const last = acc[acc.length - 1]
+    if (!last || current.start > last.end) {
+      acc.push({ ...current })
+      return acc
+    }
+    last.end = Math.max(last.end, current.end)
+    return acc
+  }, [])
+
+  const anchorRaw = options?.nowTime ? parseTimeToMinutes(options.nowTime) : serviceStartMin
+  const anchorNormalized = Number.isFinite(anchorRaw)
+    ? (anchorRaw < serviceStartMin ? anchorRaw + 24 * 60 : anchorRaw)
+    : serviceStartMin
+  const anchor = Math.min(Math.max(anchorNormalized, serviceStartMin), serviceEndMin)
+
+  let cursor = anchor
+  for (const interval of mergedWindows) {
+    if (interval.end <= cursor) continue
+    if (interval.start > cursor) break
+    cursor = interval.end
+  }
+
+  if (cursor >= serviceEndMin) return []
+
+  // Ghost slots represent "becomes available later", not "already available now".
+  if (cursor <= anchor) return []
+
+  const nextBlockStart = mergedWindows.find((interval) => interval.start > cursor)?.start ?? serviceEndMin
+  const predictedTime = toTime24(cursor)
+  const endTime = toTime24(nextBlockStart)
+
+  return [
+    {
+      id: `ghost-${tableId}-${cursor}`,
+      table: tableId,
+      predictedTime,
+      endTime,
+      label: `Available ~${formatTime12h(predictedTime)}`,
+    },
+  ]
 }
 
 export function getMergedForTable(tableId: string): MergedBlock | undefined {

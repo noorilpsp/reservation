@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { Trophy, Check, MapPin } from "lucide-react"
+import { Trophy, Check } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import {
@@ -34,7 +34,6 @@ interface FormTableAssignmentProps {
   bestTable: AvailableTable | undefined
   onModeChange: (mode: TableAssignMode) => void
   onTableChange: (tableId: string | null) => void
-  onZoneChange: (zone: string) => void
 }
 
 interface ManualTableOption {
@@ -81,6 +80,17 @@ function toTime24(totalMinutes: number): string {
   return `${h}:${m}`
 }
 
+function normalizeBlockWindow(blockStart: number, blockEnd: number, anchor: number): { start: number; end: number } {
+  let start = blockStart
+  let end = blockEnd
+  if (end <= start) end += 24 * 60
+  while (end <= anchor) {
+    start += 24 * 60
+    end += 24 * 60
+  }
+  return { start, end }
+}
+
 function formatOpeningDelta(minutes: number): string {
   if (minutes <= 0) return "now"
   if (minutes < 60) return `${minutes}m`
@@ -100,7 +110,6 @@ export function FormTableAssignment({
   bestTable,
   onModeChange,
   onTableChange,
-  onZoneChange,
 }: FormTableAssignmentProps) {
   const slotStart = toMinutes(selectedTime)
   const slotEnd = slotStart + duration
@@ -112,28 +121,20 @@ export function FormTableAssignment({
         ?? lane.zone
 
       const overlapping = getBlocksForTable(lane.id).filter((block) => {
-        let blockStart = toMinutes(block.startTime)
-        let blockEnd = toMinutes(block.endTime)
-        if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd)) return false
-        if (blockEnd <= blockStart) blockEnd += 24 * 60
-
-        if (blockStart < slotStart) {
-          blockStart += 24 * 60
-          blockEnd += 24 * 60
-        }
-
-        return slotStart < blockEnd && slotEnd > blockStart
+        const rawStart = toMinutes(block.startTime)
+        const rawEnd = toMinutes(block.endTime)
+        if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return false
+        const { start, end } = normalizeBlockWindow(rawStart, rawEnd, slotStart)
+        return slotStart < end && slotEnd > start
       })
 
       const available = overlapping.length === 0
       const overlapEnds = overlapping
         .map((block) => {
-          const start = toMinutes(block.startTime)
-          let end = toMinutes(block.endTime)
-          if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined
-          if (end <= start) end += 24 * 60
-          if (end < slotStart) end += 24 * 60
-          return end
+          const rawStart = toMinutes(block.startTime)
+          const rawEnd = toMinutes(block.endTime)
+          if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return undefined
+          return normalizeBlockWindow(rawStart, rawEnd, slotStart).end
         })
         .filter((value): value is number => typeof value === "number")
       const nextAvailableMin = available
@@ -220,7 +221,7 @@ export function FormTableAssignment({
         }}
         className="space-y-2"
       >
-        {/* Auto-assign */}
+        {/* AI auto-assign */}
         <label
           className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
             mode === "auto"
@@ -232,7 +233,7 @@ export function FormTableAssignment({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <Label htmlFor="auto" className="text-sm font-medium cursor-pointer">
-                Auto-assign
+                AI auto-assign
               </Label>
               {bestTable && (
                 <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-400/10 rounded-full px-2 py-0.5">
@@ -427,24 +428,6 @@ export function FormTableAssignment({
         </label>
       </RadioGroup>
 
-      {/* Zone preference */}
-      <div>
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-          <MapPin className="h-3 w-3" />
-          Zone preference
-        </label>
-        <Select value={zonePreference} onValueChange={onZoneChange}>
-          <SelectTrigger className="bg-secondary/50 border-border/60">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">No Preference</SelectItem>
-            <SelectItem value="main">Main Dining</SelectItem>
-            <SelectItem value="patio">Patio</SelectItem>
-            <SelectItem value="private">Private Room</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
     </div>
   )
 }

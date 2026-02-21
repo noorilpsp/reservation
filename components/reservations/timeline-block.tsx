@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState, useCallback } from "react"
 import Link from "next/link"
+import type { PointerEvent } from "react"
 import {
   Tooltip,
   TooltipContent,
@@ -37,6 +37,10 @@ interface ReservationBlockProps {
   slotWidth?: number
   onClick: (block: TBlock) => void
   axisStart: string
+  onDragStart?: (event: PointerEvent<HTMLDivElement>, block: TBlock) => void
+  onResizeStart?: (event: PointerEvent<HTMLDivElement>, block: TBlock) => void
+  isGhosted?: boolean
+  isInvalidDrop?: boolean
 }
 
 function offsetToPixelAdaptive(offset: number, zoom: ZoomLevel, slotWidth?: number): number {
@@ -45,12 +49,17 @@ function offsetToPixelAdaptive(offset: number, zoom: ZoomLevel, slotWidth?: numb
   return (offset / slotMinutes) * slotWidth
 }
 
-export function ReservationBlock({ block, zoom, slotWidth, onClick, axisStart }: ReservationBlockProps) {
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const blockRef = useRef<HTMLDivElement>(null)
-  const startPos = useRef({ x: 0, y: 0 })
-
+export function ReservationBlock({
+  block,
+  zoom,
+  slotWidth,
+  onClick,
+  axisStart,
+  onDragStart,
+  onResizeStart,
+  isGhosted = false,
+  isInvalidDrop = false,
+}: ReservationBlockProps) {
   const startOff = timeToOffset(block.startTime, axisStart)
   const endOff = timeToOffset(block.endTime, axisStart)
   const leftPx = offsetToPixelAdaptive(startOff, zoom, slotWidth)
@@ -59,27 +68,6 @@ export function ReservationBlock({ block, zoom, slotWidth, onClick, axisStart }:
   const statusLabel = getStatusLabel(block)
   const isPast = block.status === "completed"
   const isLate = block.status === "late"
-
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    startPos.current = { x: e.clientX, y: e.clientY }
-    setIsDragging(true)
-
-    const handleMove = (ev: MouseEvent) => {
-      setDragOffset({
-        x: ev.clientX - startPos.current.x,
-        y: ev.clientY - startPos.current.y,
-      })
-    }
-    const handleUp = () => {
-      setIsDragging(false)
-      setDragOffset({ x: 0, y: 0 })
-      window.removeEventListener("mousemove", handleMove)
-      window.removeEventListener("mouseup", handleUp)
-    }
-    window.addEventListener("mousemove", handleMove)
-    window.addEventListener("mouseup", handleUp)
-  }, [])
 
   // Tag icons
   const tagIcons = block.tags.map((t) => {
@@ -101,27 +89,33 @@ export function ReservationBlock({ block, zoom, slotWidth, onClick, axisStart }:
         <Tooltip>
           <TooltipTrigger asChild>
             <div
-              ref={blockRef}
               role="button"
               tabIndex={0}
               className={cn(
-                "tl-block absolute top-1 bottom-1 cursor-grab rounded-md border-l-[3px] backdrop-blur-sm",
+                "tl-block absolute top-1 bottom-1 rounded-md border-l-[3px] backdrop-blur-sm",
                 "transition-shadow duration-150",
                 "hover:shadow-lg hover:shadow-black/30 hover:z-10",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:ring-offset-1 focus-visible:ring-offset-zinc-950",
+                onDragStart ? "cursor-grab active:cursor-grabbing touch-none" : "cursor-pointer",
                 colors.bg,
                 colors.border,
                 isPast && "opacity-50",
                 isLate && "tl-pulse-late",
-                isDragging && "cursor-grabbing shadow-2xl shadow-black/50 z-30 scale-[1.03] rotate-[1deg]"
+                isGhosted && "opacity-85 z-40 ring-1 ring-cyan-300/50 shadow-xl shadow-black/40",
+                isInvalidDrop && "ring-1 ring-rose-400/60"
               )}
               style={{
                 left: leftPx,
                 width: Math.max(widthPx, 40),
-                transform: isDragging ? `translate(${dragOffset.x}px, ${dragOffset.y}px) scale(1.03) rotate(1deg)` : undefined,
               }}
-              onClick={() => onClick(block)}
-              onMouseDown={handleDragStart}
+              onClick={() => {
+                if (!onDragStart) onClick(block)
+              }}
+              onPointerDown={(event) => {
+                if (!event.isPrimary) return
+                if (event.pointerType !== "touch" && event.button !== 0) return
+                onDragStart?.(event, block)
+              }}
               onKeyDown={(e) => { if (e.key === "Enter") onClick(block) }}
               aria-label={`${block.guestName}, party of ${block.partySize}, ${block.table}, ${formatTime24h(block.startTime)}, ${statusLabel}${block.tags.map(t => `, ${t.label}`).join("")}`}
             >
@@ -171,6 +165,21 @@ export function ReservationBlock({ block, zoom, slotWidth, onClick, axisStart }:
                       {block.riskScore}%
                     </Badge>
                   </div>
+                )}
+
+                {onResizeStart && (
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={`Resize ${block.guestName}`}
+                    className="absolute inset-y-0 right-0 w-2 cursor-ew-resize rounded-r-md bg-transparent hover:bg-cyan-400/20 touch-none"
+                    onPointerDown={(event) => {
+                      if (!event.isPrimary) return
+                      if (event.pointerType !== "touch" && event.button !== 0) return
+                      event.stopPropagation()
+                      onResizeStart(event, block)
+                    }}
+                  />
                 )}
               </div>
             </div>

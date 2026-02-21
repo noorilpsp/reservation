@@ -93,6 +93,7 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
   const prefillDate = searchParams.get("date")
   const prefillTime = searchParams.get("time")
   const prefillTable = searchParams.get("table")
+  const prefillZone = searchParams.get("zone")
   const prefillService = searchParams.get("service")
   const prefillPartySizeRaw = searchParams.get("partySize")
   const prefillDurationRaw = searchParams.get("duration")
@@ -107,13 +108,14 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
           date: prefillDate ?? undefined,
           time: prefillTime ?? undefined,
           assignedTable: prefillTable ?? undefined,
+          zonePreference: prefillZone ?? undefined,
           servicePeriodId: prefillService ?? undefined,
           partySize: Number.isFinite(prefillPartySize) ? prefillPartySize : undefined,
           duration: Number.isFinite(prefillDuration) ? prefillDuration : undefined,
           durationMax: Number.isFinite(prefillDurationMax) ? prefillDurationMax : undefined,
         }
       : undefined
-  const formRenderKey = `${mode}:${prefillDate ?? ""}:${prefillTime ?? ""}:${prefillTable ?? ""}:${prefillService ?? ""}:${prefillPartySize ?? ""}:${prefillDuration ?? ""}:${prefillDurationMax ?? ""}`
+  const formRenderKey = `${mode}:${prefillDate ?? ""}:${prefillTime ?? ""}:${prefillTable ?? ""}:${prefillZone ?? ""}:${prefillService ?? ""}:${prefillPartySize ?? ""}:${prefillDuration ?? ""}:${prefillDurationMax ?? ""}`
 
   const shellMetrics = useMemo(() => {
     const nowMinutes = timeToMinutes(restaurantConfig.currentTime)
@@ -181,6 +183,7 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
       next.delete("date")
       next.delete("table")
       next.delete("service")
+      next.delete("zone")
       next.delete("partySize")
       next.delete("duration")
       next.delete("durationMax")

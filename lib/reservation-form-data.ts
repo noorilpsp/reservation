@@ -1,4 +1,4 @@
-import { timelineBlocks } from "./timeline-data"
+import { getTimelineBlocksNoOverlap } from "./timeline-data"
 import { restaurantConfig } from "./reservations-data"
 
 // ── Reservation Create/Edit Form Data ────────────────────────────────────────
@@ -580,7 +580,7 @@ export function getCapacityAtTime(time: string): CapacitySnapshot | undefined {
   const totalSeats = restaurantConfig.totalSeats
   if (totalSeats <= 0) return undefined
 
-  const activeSeatDemand = timelineBlocks
+  const activeSeatDemand = getTimelineBlocksNoOverlap()
     .filter((block) => block.status !== "no-show")
     .filter((block) => {
       const start = parseMinutes(block.startTime)

@@ -9,6 +9,7 @@ import {
   Eye,
   Filter,
   Plus,
+  Users,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -32,6 +33,8 @@ interface TimelineTopBarProps {
   onZoomChange: (z: ZoomLevel) => void
   zoneFilter: string
   onZoneFilterChange: (zone: string) => void
+  partySizeFilter: string
+  onPartySizeFilterChange: (filter: string) => void
   showGhosts: boolean
   onShowGhostsChange: (v: boolean) => void
   servicePeriodId: string
@@ -49,6 +52,8 @@ export function TimelineTopBar({
   onZoomChange,
   zoneFilter,
   onZoneFilterChange,
+  partySizeFilter,
+  onPartySizeFilterChange,
   showGhosts,
   onShowGhostsChange,
   servicePeriodId,
@@ -68,6 +73,13 @@ export function TimelineTopBar({
     main: "Main Dining",
     patio: "Patio",
     private: "Private Room",
+  }
+  const partyFilterLabels: Record<string, string> = {
+    all: "All Parties",
+    "1-2": "1-2p",
+    "3-4": "3-4p",
+    "5-6": "5-6p",
+    "7+": "7+p",
   }
   const activeService =
     restaurantConfig.servicePeriods.find((p) => p.id === servicePeriodId)
@@ -219,6 +231,32 @@ export function TimelineTopBar({
                     className={cn(
                       "text-foreground focus:bg-zinc-800 focus:text-foreground",
                       zoneFilter === key && "bg-zinc-800"
+                    )}
+                  >
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Party size filter */}
+          <div className="hidden items-center gap-1.5 sm:flex">
+            <Users className="h-3.5 w-3.5 text-muted-foreground" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground">
+                  {partyFilterLabels[partySizeFilter] ?? "All Parties"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="border-zinc-700 bg-zinc-900">
+                {Object.entries(partyFilterLabels).map(([key, label]) => (
+                  <DropdownMenuItem
+                    key={key}
+                    onClick={() => onPartySizeFilterChange(key)}
+                    className={cn(
+                      "text-foreground focus:bg-zinc-800 focus:text-foreground",
+                      partySizeFilter === key && "bg-zinc-800"
                     )}
                   >
                     {label}

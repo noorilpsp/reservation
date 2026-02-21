@@ -6,6 +6,8 @@ import { useMediaQuery } from "@/hooks/use-media-query"
 import {
   restaurantConfig,
   getCurrentLocalTime24,
+  getTimelineBlocksNoOverlap,
+  tableLanes as timelineTableLanes,
   type ZoomLevel,
   type TimelineBlock,
 } from "@/lib/timeline-data"
@@ -76,6 +78,7 @@ export function TimelineView() {
 
   const [zoom, setZoom] = useState<ZoomLevel>("30min")
   const [zoneFilter, setZoneFilter] = useState("all")
+  const [partySizeFilter, setPartySizeFilter] = useState("all")
   const [showGhosts, setShowGhosts] = useState(true)
   const [currentTime, setCurrentTime] = useState(() => getCurrentLocalTime24())
   const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()))
@@ -88,6 +91,7 @@ export function TimelineView() {
   })
   const [selectedBlock, setSelectedBlock] = useState<TimelineBlock | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [blocks, setBlocks] = useState<TimelineBlock[]>(() => getTimelineBlocksNoOverlap())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isMobile = useMediaQuery("(max-width: 767px)")
 
@@ -102,6 +106,22 @@ export function TimelineView() {
     setDetailOpen(true)
   }, [])
 
+  const handleBlockUpdate = useCallback(
+    (blockId: string, updates: Pick<TimelineBlock, "table" | "startTime" | "endTime">) => {
+      setBlocks((prev) => prev.map((block) => (
+        block.id === blockId
+          ? { ...block, ...updates }
+          : block
+      )))
+      setSelectedBlock((prev) => (
+        prev && prev.id === blockId
+          ? { ...prev, ...updates }
+          : prev
+      ))
+    },
+    []
+  )
+
   const handleOpenNewReservation = useCallback(() => {
     const next = new URLSearchParams(searchParams.toString())
     const defaultTime = isSelectedDateToday && isWithinService(currentTime, activeService.start, activeService.end)
@@ -115,6 +135,7 @@ export function TimelineView() {
     next.delete("id")
     next.delete("detail")
     next.delete("table")
+    next.delete("zone")
     next.delete("duration")
     next.delete("durationMax")
 
@@ -124,9 +145,12 @@ export function TimelineView() {
 
   const handleEmptySlotClick = useCallback((payload: { tableId: string; time: string; duration: number; durationMax: number; partySize: number }) => {
     const next = new URLSearchParams(searchParams.toString())
+    const selectedLane = timelineTableLanes.find((lane) => lane.id === payload.tableId)
     next.set("action", "new")
     next.set("time", payload.time)
     next.set("table", payload.tableId)
+    if (selectedLane) next.set("zone", selectedLane.zone)
+    else next.delete("zone")
     next.set("date", toIsoDate(selectedDate))
     next.set("service", servicePeriodId)
     next.set("partySize", payload.partySize.toString())
@@ -171,6 +195,8 @@ export function TimelineView() {
         onZoomChange={setZoom}
         zoneFilter={zoneFilter}
         onZoneFilterChange={setZoneFilter}
+        partySizeFilter={partySizeFilter}
+        onPartySizeFilterChange={setPartySizeFilter}
         showGhosts={showGhosts}
         onShowGhostsChange={setShowGhosts}
         servicePeriodId={servicePeriodId}
@@ -185,21 +211,27 @@ export function TimelineView() {
 
       {isMobile ? (
         <TimelineMobile
+          blocks={blocks}
           zoneFilter={zoneFilter}
           onZoneFilterChange={setZoneFilter}
+          partySizeFilter={partySizeFilter}
           showGhosts={showGhosts}
           onBlockClick={handleBlockClick}
           serviceStart={activeService.start}
           serviceEnd={activeService.end}
+          nowTime={nowTimeForTimeline}
         />
       ) : (
         <TimelineGrid
+          blocks={blocks}
           zoom={zoom}
           zoneFilter={zoneFilter}
+          partySizeFilter={partySizeFilter}
           showGhosts={showGhosts}
           onScrollChange={handleScrollChange}
           scrollContainerRef={scrollContainerRef}
           onBlockClick={handleBlockClick}
+          onBlockUpdate={handleBlockUpdate}
           onEmptySlotClick={handleEmptySlotClick}
           serviceStart={activeService.start}
           serviceEnd={activeService.end}
