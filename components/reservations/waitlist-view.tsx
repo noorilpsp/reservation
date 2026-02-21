@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
@@ -13,6 +13,7 @@ import { WaitlistQrPanel } from "./waitlist-qr-panel"
 import { WaitlistCompleted } from "./waitlist-completed"
 import { WaitlistAddDialog } from "./waitlist-add-dialog"
 import { WaitlistSeatDialog } from "./waitlist-seat-dialog"
+import { WaitlistDetailPanel } from "./waitlist-detail-panel"
 import {
   type WaitlistEntry,
   type SortMode,
@@ -32,8 +33,19 @@ export function WaitlistView() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [seatDialog, setSeatDialog] = useState<{ entry: WaitlistEntry; tableId: string } | null>(null)
   const [showMatchPanel, setShowMatchPanel] = useState(false)
+  const [detailEntry, setDetailEntry] = useState<WaitlistEntry | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const sorted = useMemo(() => sortWaitlist(entries, sortMode), [entries, sortMode])
+
+  useEffect(() => {
+    if (!detailEntry) return
+    const stillExists = entries.some((entry) => entry.id === detailEntry.id)
+    if (!stillExists) {
+      setDetailOpen(false)
+      setDetailEntry(null)
+    }
+  }, [detailEntry, entries])
 
   // Alert match: first entry with ready-now match
   const alertEntry = entries.find((e) => e.bestMatch?.status === "ready-now")
@@ -59,6 +71,11 @@ export function WaitlistView() {
 
   const handleRemove = useCallback((id: string) => {
     setEntries((prev) => prev.filter((e) => e.id !== id))
+  }, [])
+
+  const handleOpenDetail = useCallback((entry: WaitlistEntry) => {
+    setDetailEntry(entry)
+    setDetailOpen(true)
   }, [])
 
   const handleAdd = useCallback(
@@ -159,6 +176,7 @@ export function WaitlistView() {
                   onToggleExpand={() =>
                     setExpandedId((prev) => (prev === entry.id ? null : entry.id))
                   }
+                  onOpenDetail={() => handleOpenDetail(entry)}
                   onSeatAt={(tableId) => handleSeatAt(entry, tableId)}
                   onTextGuest={() => {}}
                   onRemove={() => handleRemove(entry.id)}
@@ -239,6 +257,23 @@ export function WaitlistView() {
         entry={seatDialog?.entry ?? null}
         tableId={seatDialog?.tableId ?? ""}
         onConfirm={handleConfirmSeat}
+      />
+
+      <WaitlistDetailPanel
+        entry={detailEntry}
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        onSeatAt={(tableId) => {
+          if (!detailEntry) return
+          handleSeatAt(detailEntry, tableId)
+        }}
+        onTextGuest={() => {}}
+        onRemove={() => {
+          if (!detailEntry) return
+          handleRemove(detailEntry.id)
+          setDetailOpen(false)
+        }}
+        onConvert={() => {}}
       />
     </div>
   )

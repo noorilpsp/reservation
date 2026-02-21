@@ -187,7 +187,7 @@ export function ReservationBlock({ block, zoom, onClick }: ReservationBlockProps
         <ContextMenuItem className="text-foreground focus:bg-zinc-800 focus:text-foreground">Assign Server</ContextMenuItem>
         <ContextMenuSeparator className="bg-zinc-800" />
         <ContextMenuItem className="text-foreground focus:bg-zinc-800 focus:text-foreground" asChild>
-          <Link href="/reservations/edit">Edit Reservation</Link>
+          <Link href="?action=edit&id=res_001">Edit Reservation</Link>
         </ContextMenuItem>
         <ContextMenuItem className="text-foreground focus:bg-zinc-800 focus:text-foreground">Move to Waitlist</ContextMenuItem>
         <ContextMenuSeparator className="bg-zinc-800" />

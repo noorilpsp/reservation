@@ -1,9 +1,5 @@
-import { ReservationFormView } from "@/components/reservations/reservation-form-view"
+import { redirect } from "next/navigation"
 
 export default function NewReservationPage() {
-  return (
-    <div className="h-screen">
-      <ReservationFormView mode="create" />
-    </div>
-  )
+  redirect("/reservations?action=new")
 }

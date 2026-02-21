@@ -1,5 +1,7 @@
 "use client"
 
+import { Suspense, useState } from "react"
+import { TopBar } from "@/components/reservations/top-bar"
 import { HeroStats } from "@/components/reservations/hero-stats"
 import { CapacityBar } from "@/components/reservations/capacity-bar"
 import { UpcomingReservations } from "@/components/reservations/upcoming-reservations"
@@ -7,13 +9,15 @@ import { WaitlistPanel } from "@/components/reservations/waitlist-panel"
 import { TurnTracker } from "@/components/reservations/turn-tracker"
 import { PaceStrip } from "@/components/reservations/pace-strip"
 import {
+  type ServicePeriod,
   reservations,
   capacitySlots,
   getHeroStats,
 } from "@/lib/reservations-data"
 import { Toaster } from "sonner"
 
-export default function ReservationsPage() {
+function ReservationsDashboardPageContent() {
+  const [servicePeriod, setServicePeriod] = useState<ServicePeriod>("dinner")
   const stats = getHeroStats(reservations)
 
   return (
@@ -23,6 +27,11 @@ export default function ReservationsPage() {
         toastOptions={{
           className: "border-zinc-700 bg-zinc-900 text-foreground",
         }}
+      />
+
+      <TopBar
+        servicePeriod={servicePeriod}
+        onServicePeriodChange={setServicePeriod}
       />
 
       <main className="flex flex-1 flex-col gap-5 py-5">
@@ -53,5 +62,13 @@ export default function ReservationsPage() {
         <PaceStrip />
       </main>
     </div>
+  )
+}
+
+export default function ReservationsDashboardPage() {
+  return (
+    <Suspense fallback={<div className="h-full bg-zinc-950" />}>
+      <ReservationsDashboardPageContent />
+    </Suspense>
   )
 }

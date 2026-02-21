@@ -67,7 +67,7 @@ function ConfirmedActions({ reservation }: { reservation: DetailReservation }) {
         <MessageSquare className="mr-1.5 h-3.5 w-3.5" /> Text Guest
       </Button>
       <Button size="sm" variant="outline" className="border-zinc-700 bg-zinc-800/50 text-zinc-200 hover:bg-zinc-700 hover:text-zinc-100" asChild>
-        <Link href="/reservations/edit"><Edit className="mr-1.5 h-3.5 w-3.5" /> Edit</Link>
+        <Link href="?action=edit&id=res_001"><Edit className="mr-1.5 h-3.5 w-3.5" /> Edit</Link>
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -100,7 +100,7 @@ function ArrivingActions({ reservation }: { reservation: DetailReservation }) {
         <Send className="mr-1.5 h-3.5 w-3.5" /> Text: Ready
       </Button>
       <Button size="sm" variant="outline" className="border-zinc-700 bg-zinc-800/50 text-zinc-200 hover:bg-zinc-700 hover:text-zinc-100" asChild>
-        <Link href="/reservations/edit"><Edit className="mr-1.5 h-3.5 w-3.5" /> Edit</Link>
+        <Link href="?action=edit&id=res_001"><Edit className="mr-1.5 h-3.5 w-3.5" /> Edit</Link>
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

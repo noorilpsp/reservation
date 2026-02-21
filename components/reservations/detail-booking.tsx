@@ -102,7 +102,7 @@ export function DetailBooking({ reservation }: DetailBookingProps) {
     <section className="detail-section-stagger rounded-xl border border-zinc-800/50 bg-zinc-900/50 p-4">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Booking Details</h3>
-        <Link href="/reservations/edit" className="flex items-center gap-1 text-xs font-medium text-emerald-400 transition-colors hover:text-emerald-300">
+        <Link href="?action=edit&id=res_001" className="flex items-center gap-1 text-xs font-medium text-emerald-400 transition-colors hover:text-emerald-300">
           <Edit className="h-3 w-3" /> Edit
         </Link>
       </div>

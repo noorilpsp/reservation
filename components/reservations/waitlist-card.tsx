@@ -35,6 +35,7 @@ interface WaitlistCardProps {
   position: number
   isExpanded: boolean
   onToggleExpand: () => void
+  onOpenDetail: () => void
   onSeatAt: (tableId: string) => void
   onTextGuest: (action: string) => void
   onRemove: () => void
@@ -46,6 +47,7 @@ export function WaitlistCard({
   position,
   isExpanded,
   onToggleExpand,
+  onOpenDetail,
   onSeatAt,
   onTextGuest,
   onRemove,
@@ -82,12 +84,14 @@ export function WaitlistCard({
       role="article"
       aria-label={`Waitlist position ${position}, ${entry.name}, ${entry.partySize} guests`}
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === "Enter") onToggleExpand() }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onOpenDetail()
+      }}
     >
       {/* Header row */}
       <div
         className="flex cursor-pointer items-start justify-between gap-3 px-4 pt-4"
-        onClick={onToggleExpand}
+        onClick={onOpenDetail}
       >
         <div className="flex items-center gap-3">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-zinc-800 text-xs font-bold text-zinc-300">
@@ -113,7 +117,15 @@ export function WaitlistCard({
           <Badge variant="outline" className="border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-200">
             {entry.partySize}p
           </Badge>
-          <button className="text-zinc-500 hover:text-zinc-300">
+          <button
+            type="button"
+            className="text-zinc-500 hover:text-zinc-300"
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleExpand()
+            }}
+            aria-label={isExpanded ? "Collapse details" : "Expand details"}
+          >
             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
         </div>

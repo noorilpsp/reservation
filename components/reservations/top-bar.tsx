@@ -149,7 +149,7 @@ export function TopBar({ servicePeriod, onServicePeriodChange }: TopBarProps) {
           className="hidden bg-emerald-600 text-emerald-50 hover:bg-emerald-500 md:flex"
           asChild
         >
-          <Link href="/reservations/new">
+          <Link href="?action=new">
             <Plus className="mr-1.5 h-4 w-4" />
             New Reservation
           </Link>
@@ -182,7 +182,7 @@ export function TopBar({ servicePeriod, onServicePeriodChange }: TopBarProps) {
         aria-label="New Reservation"
         asChild
       >
-        <Link href="/reservations/new">
+        <Link href="?action=new">
           <Plus className="h-6 w-6 text-emerald-50" />
         </Link>
       </Button>

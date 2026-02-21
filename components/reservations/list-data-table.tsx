@@ -387,7 +387,7 @@ export function ListDataTable({
                         <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800 focus:text-foreground">Call Guest</DropdownMenuItem>
                         <DropdownMenuSeparator className="bg-zinc-800" />
                         <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800 focus:text-foreground" asChild>
-                          <Link href="/reservations/edit">Edit Reservation</Link>
+                          <Link href="?action=edit&id=res_001">Edit Reservation</Link>
                         </DropdownMenuItem>
                         <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800 focus:text-foreground">Change Table</DropdownMenuItem>
                         <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800 focus:text-foreground">Change Time</DropdownMenuItem>

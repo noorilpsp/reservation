@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BarChart3, Bell, ClipboardList, Clock, Combine, LayoutGrid, ShoppingBasket, Table2, Users } from "lucide-react"
+import { BarChart3, Bell, CalendarDays, ClipboardList, Clock, Combine, LayoutGrid, ShoppingBasket, Table2, Users } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -51,10 +51,16 @@ const items: OpsNavItem[] = [
     active: (pathname) => pathname.startsWith("/communications"),
   },
   {
+    href: "/reservations",
+    label: "Reservations",
+    Icon: CalendarDays,
+    active: (pathname) => pathname.startsWith("/reservations") && !pathname.startsWith("/reservations/waitlist"),
+  },
+  {
     href: "/reservations/waitlist",
     label: "Waitlist",
     Icon: Clock,
-    active: (pathname) => pathname.startsWith("/reservations"),
+    active: (pathname) => pathname.startsWith("/reservations/waitlist"),
   },
   {
     href: "/guests",
@@ -75,7 +81,7 @@ export function OpsBottomNav() {
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-[70] border-t border-cyan-200/35 bg-[linear-gradient(135deg,rgba(2,6,23,0.96),rgba(15,23,42,0.94))] px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-14px_36px_rgba(2,6,23,0.5)] backdrop-blur-xl">
-      <div className="mx-auto grid w-full max-w-[1680px] grid-cols-9 gap-1.5">
+      <div className="mx-auto grid w-full max-w-[1680px] grid-cols-10 gap-1.5">
         {items.map((item) => {
           const isActive = item.active(pathname)
           return (
