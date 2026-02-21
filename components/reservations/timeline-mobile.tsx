@@ -29,7 +29,7 @@ import {
   getBlockColor,
   getRiskDot,
   getStatusLabel,
-  formatTime12h,
+  formatTime24h,
 } from "@/lib/timeline-data"
 
 interface TimelineMobileProps {
@@ -37,6 +37,8 @@ interface TimelineMobileProps {
   onZoneFilterChange: (zone: string) => void
   showGhosts: boolean
   onBlockClick: (block: TimelineBlock) => void
+  serviceStart: string
+  serviceEnd: string
 }
 
 export function TimelineMobile({
@@ -44,7 +46,23 @@ export function TimelineMobile({
   onZoneFilterChange,
   showGhosts,
   onBlockClick,
+  serviceStart,
+  serviceEnd,
 }: TimelineMobileProps) {
+  const toMinutes = (time: string) => {
+    const [h, m] = time.split(":").map(Number)
+    return h * 60 + m
+  }
+  const serviceStartMin = toMinutes(serviceStart)
+  let serviceEndMin = toMinutes(serviceEnd)
+  if (serviceEndMin <= serviceStartMin) serviceEndMin += 24 * 60
+  const normalize = (min: number) => (min < serviceStartMin ? min + 24 * 60 : min)
+  const overlapsService = (start: string, end: string) => {
+    const startMin = normalize(toMinutes(start))
+    const endMin = normalize(toMinutes(end))
+    return startMin < serviceEndMin && endMin > serviceStartMin
+  }
+
   const filteredTables = zoneFilter === "all"
     ? tableLanes
     : tableLanes.filter((t) => t.zone === zoneFilter)
@@ -56,13 +74,20 @@ export function TimelineMobile({
   const currentTable = filteredTables[currentIndex]
   if (!currentTable) return null
 
-  const blocks = getBlocksForTable(currentTable.id).sort((a, b) => {
+  const blocks = getBlocksForTable(currentTable.id).filter((block) =>
+    overlapsService(block.startTime, block.endTime)
+  ).sort((a, b) => {
     const aMin = parseInt(a.startTime.split(":")[0]) * 60 + parseInt(a.startTime.split(":")[1])
     const bMin = parseInt(b.startTime.split(":")[0]) * 60 + parseInt(b.startTime.split(":")[1])
     return aMin - bMin
   })
-  const ghosts = showGhosts ? getGhostsForTable(currentTable.id) : []
-  const merged = getMergedForTable(currentTable.id)
+  const ghosts = showGhosts
+    ? getGhostsForTable(currentTable.id).filter((ghost) =>
+      overlapsService(ghost.predictedTime, ghost.endTime)
+    )
+    : []
+  const mergedRaw = getMergedForTable(currentTable.id)
+  const merged = mergedRaw && overlapsService(mergedRaw.startTime, mergedRaw.endTime) ? mergedRaw : null
   const zoneName = zones.find((z) => z.id === currentTable.zone)?.name ?? ""
 
   const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
@@ -85,7 +110,7 @@ export function TimelineMobile({
   return (
     <div
       ref={containerRef}
-      className="flex flex-1 flex-col"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -146,13 +171,13 @@ export function TimelineMobile({
       </div>
 
       {/* Reservation cards */}
-      <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-24 pt-2">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-24 pt-2">
         {/* Merged indicator */}
         {merged && (
           <div className="rounded-lg border border-dashed border-zinc-700/50 bg-zinc-800/20 px-4 py-3 text-center">
             <span className="text-xs text-zinc-500">MERGED WITH {merged.mergedWith}</span>
             <p className="mt-0.5 text-[10px] text-zinc-600">
-              {formatTime12h(merged.startTime)} - {formatTime12h(merged.endTime)}
+              {formatTime24h(merged.startTime)} - {formatTime24h(merged.endTime)}
             </p>
           </div>
         )}
@@ -186,7 +211,7 @@ export function TimelineMobile({
                     <span className={cn("h-2 w-2 rounded-full", getRiskDot(block.risk))} />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {formatTime12h(block.startTime)} - {formatTime12h(block.endTime)}
+                    {formatTime24h(block.startTime)} - {formatTime24h(block.endTime)}
                   </p>
                   <p className={cn("text-xs", colors.text)}>
                     {statusLabel}{isPast && " \u2713"}
@@ -270,7 +295,7 @@ export function TimelineMobile({
             className="tl-ghost-block rounded-lg border border-dashed border-zinc-600/40 bg-zinc-600/10 p-4"
           >
             <p className="text-xs text-zinc-500">
-              {formatTime12h(ghost.predictedTime)} - open
+              {formatTime24h(ghost.predictedTime)} - open
             </p>
             <p className="text-sm text-zinc-400">{ghost.label}</p>
             {ghost.conditional && (

@@ -1,3 +1,6 @@
+import { timelineBlocks } from "./timeline-data"
+import { restaurantConfig } from "./reservations-data"
+
 // ── Reservation Create/Edit Form Data ────────────────────────────────────────
 
 export interface GuestProfile {
@@ -562,10 +565,44 @@ export function getRiskLevel(guest: GuestProfile | null): { level: "low" | "medi
 }
 
 export function getCapacityAtTime(time: string): CapacitySnapshot | undefined {
-  const [h] = time.split(":").map(Number)
-  const m = parseInt(time.split(":")[1])
-  const roundedTime = `${h.toString().padStart(2, "0")}:${m < 30 ? "00" : "30"}`
-  return capacityTimeline.find((c) => c.time === roundedTime)
+  const parseMinutes = (hhmm: string): number => {
+    const [h, m] = hhmm.split(":").map(Number)
+    return h * 60 + m
+  }
+  const toLabel = (hhmm: string): string => {
+    const [h, m] = hhmm.split(":").map(Number)
+    const hour12 = h % 12 === 0 ? 12 : h % 12
+    const suffix = h >= 12 ? "PM" : "AM"
+    return `${hour12}:${m.toString().padStart(2, "0")} ${suffix}`
+  }
+
+  const target = parseMinutes(time)
+  const totalSeats = restaurantConfig.totalSeats
+  if (totalSeats <= 0) return undefined
+
+  const activeSeatDemand = timelineBlocks
+    .filter((block) => block.status !== "no-show")
+    .filter((block) => {
+      const start = parseMinutes(block.startTime)
+      let end = parseMinutes(block.endTime)
+      if (end <= start) end += 24 * 60
+
+      let point = target
+      if (point < start) point += 24 * 60
+      return point >= start && point < end
+    })
+    .reduce((sum, block) => sum + block.partySize, 0)
+
+  const seatsOccupied = Math.min(totalSeats, Math.max(0, activeSeatDemand))
+  const occupancyPct = Math.round((seatsOccupied / totalSeats) * 100)
+
+  return {
+    time,
+    label: toLabel(time),
+    occupancyPct,
+    seatsOccupied,
+    totalSeats,
+  }
 }
 
 export function getFilteredTables(

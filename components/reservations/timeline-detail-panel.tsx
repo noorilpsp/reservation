@@ -24,7 +24,7 @@ import {
   getBlockColor,
   getRiskDot,
   getStatusLabel,
-  formatTime12h,
+  formatTime24h,
 } from "@/lib/timeline-data"
 
 interface TimelineDetailPanelProps {
@@ -77,7 +77,7 @@ export function TimelineDetailPanel({ block, open, onClose }: TimelineDetailPane
             <div className="flex items-center gap-3 text-sm">
               <Clock className="h-4 w-4 text-muted-foreground" />
               <span className="text-foreground">
-                {formatTime12h(block.startTime)} - {formatTime12h(block.endTime)}
+                {formatTime24h(block.startTime)} - {formatTime24h(block.endTime)}
               </span>
             </div>
             <div className="flex items-center gap-3 text-sm">

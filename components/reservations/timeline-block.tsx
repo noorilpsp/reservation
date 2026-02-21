@@ -24,7 +24,7 @@ import {
   getBlockColor,
   getRiskDot,
   getStatusLabel,
-  formatTime12h,
+  formatTime24h,
   timeToOffset,
   offsetToPixel,
 } from "@/lib/timeline-data"
@@ -34,19 +34,27 @@ import {
 interface ReservationBlockProps {
   block: TBlock
   zoom: ZoomLevel
+  slotWidth?: number
   onClick: (block: TBlock) => void
+  axisStart: string
 }
 
-export function ReservationBlock({ block, zoom, onClick }: ReservationBlockProps) {
+function offsetToPixelAdaptive(offset: number, zoom: ZoomLevel, slotWidth?: number): number {
+  if (!slotWidth) return offsetToPixel(offset, zoom)
+  const slotMinutes = zoom === "1hr" ? 60 : zoom === "30min" ? 30 : 15
+  return (offset / slotMinutes) * slotWidth
+}
+
+export function ReservationBlock({ block, zoom, slotWidth, onClick, axisStart }: ReservationBlockProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const blockRef = useRef<HTMLDivElement>(null)
   const startPos = useRef({ x: 0, y: 0 })
 
-  const startOff = timeToOffset(block.startTime)
-  const endOff = timeToOffset(block.endTime)
-  const leftPx = offsetToPixel(startOff, zoom)
-  const widthPx = offsetToPixel(endOff - startOff, zoom)
+  const startOff = timeToOffset(block.startTime, axisStart)
+  const endOff = timeToOffset(block.endTime, axisStart)
+  const leftPx = offsetToPixelAdaptive(startOff, zoom, slotWidth)
+  const widthPx = offsetToPixelAdaptive(endOff - startOff, zoom, slotWidth)
   const colors = getBlockColor(block.status)
   const statusLabel = getStatusLabel(block)
   const isPast = block.status === "completed"
@@ -115,7 +123,7 @@ export function ReservationBlock({ block, zoom, onClick }: ReservationBlockProps
               onClick={() => onClick(block)}
               onMouseDown={handleDragStart}
               onKeyDown={(e) => { if (e.key === "Enter") onClick(block) }}
-              aria-label={`${block.guestName}, party of ${block.partySize}, ${block.table}, ${formatTime12h(block.startTime)}, ${statusLabel}${block.tags.map(t => `, ${t.label}`).join("")}`}
+              aria-label={`${block.guestName}, party of ${block.partySize}, ${block.table}, ${formatTime24h(block.startTime)}, ${statusLabel}${block.tags.map(t => `, ${t.label}`).join("")}`}
             >
               <div className="flex h-full flex-col justify-between overflow-hidden px-2 py-1">
                 {/* Top row: name, party size, risk dot */}
@@ -171,7 +179,7 @@ export function ReservationBlock({ block, zoom, onClick }: ReservationBlockProps
             <div className="space-y-1 text-xs">
               <p className="font-semibold">{block.guestName} ({block.partySize})</p>
               <p>{block.table}{block.mergedWith ? ` + ${block.mergedWith}` : ""}</p>
-              <p>{formatTime12h(block.startTime)} - {formatTime12h(block.endTime)}</p>
+              <p>{formatTime24h(block.startTime)} - {formatTime24h(block.endTime)}</p>
               <p className={colors.text}>{statusLabel}</p>
               {block.tags.map((t, i) => (
                 <p key={i} className="text-muted-foreground">{t.label}{t.detail ? `: ${t.detail}` : ""}</p>
@@ -203,13 +211,15 @@ export function ReservationBlock({ block, zoom, onClick }: ReservationBlockProps
 interface GhostBlockComponentProps {
   ghost: GhostBlock
   zoom: ZoomLevel
+  slotWidth?: number
+  axisStart: string
 }
 
-export function GhostBlockComponent({ ghost, zoom }: GhostBlockComponentProps) {
-  const startOff = timeToOffset(ghost.predictedTime)
-  const endOff = timeToOffset(ghost.endTime)
-  const leftPx = offsetToPixel(startOff, zoom)
-  const widthPx = offsetToPixel(endOff - startOff, zoom)
+export function GhostBlockComponent({ ghost, zoom, slotWidth, axisStart }: GhostBlockComponentProps) {
+  const startOff = timeToOffset(ghost.predictedTime, axisStart)
+  const endOff = timeToOffset(ghost.endTime, axisStart)
+  const leftPx = offsetToPixelAdaptive(startOff, zoom, slotWidth)
+  const widthPx = offsetToPixelAdaptive(endOff - startOff, zoom, slotWidth)
 
   return (
     <Tooltip>
@@ -246,13 +256,15 @@ export function GhostBlockComponent({ ghost, zoom }: GhostBlockComponentProps) {
 interface MergedBlockComponentProps {
   merged: MergedBlock
   zoom: ZoomLevel
+  slotWidth?: number
+  axisStart: string
 }
 
-export function MergedBlockComponent({ merged, zoom }: MergedBlockComponentProps) {
-  const startOff = timeToOffset(merged.startTime)
-  const endOff = timeToOffset(merged.endTime)
-  const leftPx = offsetToPixel(startOff, zoom)
-  const widthPx = offsetToPixel(endOff - startOff, zoom)
+export function MergedBlockComponent({ merged, zoom, slotWidth, axisStart }: MergedBlockComponentProps) {
+  const startOff = timeToOffset(merged.startTime, axisStart)
+  const endOff = timeToOffset(merged.endTime, axisStart)
+  const leftPx = offsetToPixelAdaptive(startOff, zoom, slotWidth)
+  const widthPx = offsetToPixelAdaptive(endOff - startOff, zoom, slotWidth)
 
   return (
     <div

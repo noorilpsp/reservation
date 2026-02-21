@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { cn } from "@/lib/utils"
 import {
   Tooltip,
   TooltipContent,
@@ -18,8 +19,10 @@ import {
 
 interface TimelineCapacityStripProps {
   zoom: ZoomLevel
-  scrollLeft: number
-  onSlotClick: (slotIndex: number) => void
+  scrollLeft?: number
+  onSlotClick?: (slotIndex: number) => void
+  sticky?: boolean
+  synced?: boolean
 }
 
 function getBarColor(pct: number): string {
@@ -30,8 +33,10 @@ function getBarColor(pct: number): string {
 
 export function TimelineCapacityStrip({
   zoom,
-  scrollLeft,
+  scrollLeft = 0,
   onSlotClick,
+  sticky = true,
+  synced = true,
 }: TimelineCapacityStripProps) {
   const [animated, setAnimated] = useState(false)
   const stripRef = useRef<HTMLDivElement>(null)
@@ -47,10 +52,10 @@ export function TimelineCapacityStrip({
 
   // Sync scroll with main timeline
   useEffect(() => {
-    if (stripRef.current) {
+    if (synced && stripRef.current) {
       stripRef.current.scrollLeft = scrollLeft
     }
-  }, [scrollLeft])
+  }, [scrollLeft, synced])
 
   // Map capacity data to zoom slots
   const getCapacityForSlot = (index: number): { pct: number; seats: number; total: number; arriving: number } => {
@@ -76,7 +81,12 @@ export function TimelineCapacityStrip({
   }
 
   return (
-    <div className="sticky top-[104px] z-40 border-b border-zinc-800/50 bg-background/95 backdrop-blur-sm md:top-[112px]">
+    <div
+      className={cn(
+        "border-b border-zinc-800/50 bg-background/95 backdrop-blur-sm",
+        sticky ? "sticky top-[104px] z-40 md:top-[112px]" : "rounded-xl border"
+      )}
+    >
       <TooltipProvider delayDuration={100}>
         <div className="flex">
           {/* Left label column - matches sidebar width */}
@@ -89,21 +99,23 @@ export function TimelineCapacityStrip({
           {/* Scrollable strip */}
           <div
             ref={stripRef}
-            className="overflow-hidden flex-1"
+            className={cn("flex-1", synced ? "overflow-hidden" : "overflow-x-auto scrollbar-none")}
           >
             <div className="relative" style={{ width: totalWidth }}>
               {/* NOW marker */}
-              <div
-                className="tl-now-line absolute top-0 z-20 h-full"
-                style={{ left: nowPixel }}
-              >
-                <div className="flex h-full flex-col items-center">
-                  <span className="rounded bg-cyan-500 px-1.5 py-0.5 text-[9px] font-bold text-zinc-950 shadow-lg shadow-cyan-500/30">
-                    NOW {NOW_LABEL}
-                  </span>
-                  <div className="h-full w-0.5 bg-cyan-400/60" />
+              {nowPixel !== null && (
+                <div
+                  className="tl-now-line absolute top-0 z-20 h-full"
+                  style={{ left: nowPixel }}
+                >
+                  <div className="flex h-full flex-col items-center">
+                    <span className="rounded bg-cyan-500 px-1.5 py-0.5 text-[9px] font-bold text-zinc-950 shadow-lg shadow-cyan-500/30">
+                      NOW {NOW_LABEL}
+                    </span>
+                    <div className="h-full w-0.5 bg-cyan-400/60" />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Capacity bars + time labels */}
               <div className="flex h-16 items-end">
@@ -117,7 +129,7 @@ export function TimelineCapacityStrip({
                           type="button"
                           className="group relative flex flex-col items-center justify-end"
                           style={{ width: slotWidth, height: "100%" }}
-                          onClick={() => onSlotClick(i)}
+                          onClick={() => onSlotClick?.(i)}
                           aria-label={`${label}: ${cap.pct}% capacity`}
                         >
                           <div

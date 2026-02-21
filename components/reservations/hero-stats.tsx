@@ -8,11 +8,14 @@ import {
   Footprints,
   ListOrdered,
   UserX,
+  Gauge,
+  Clock3,
 } from "lucide-react"
 
 interface StatCardProps {
   label: string
   value: number
+  valueSuffix?: string
   subtitle: string
   icon: React.ReactNode
   maxValue?: number
@@ -59,6 +62,7 @@ function AnimatedNumber({ target, delay = 0 }: { target: number; delay: number }
 function StatCard({
   label,
   value,
+  valueSuffix,
   subtitle,
   icon,
   maxValue,
@@ -107,6 +111,9 @@ function StatCard({
         <span className="text-2xl font-bold text-foreground">
           <AnimatedNumber target={value} delay={delay} />
         </span>
+        {valueSuffix && (
+          <span className="text-sm text-muted-foreground">{valueSuffix}</span>
+        )}
         {maxValue && (
           <span className="text-sm text-muted-foreground">
             /{maxValue}
@@ -150,13 +157,15 @@ interface HeroStatsProps {
     waitlist: number
     noShows: number
     noShowPct: string
+    capacityNow: { pct: number; occupied: number; total: number }
+    upcoming2h: number
   }
 }
 
 export function HeroStats({ stats }: HeroStatsProps) {
   return (
     <section aria-label="Key metrics" className="px-4 lg:px-6">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <StatCard
           label="Covers"
           value={stats.covers.current}
@@ -209,6 +218,23 @@ export function HeroStats({ stats }: HeroStatsProps) {
           danger={parseFloat(stats.noShowPct) > 5}
           dangerPct={stats.noShowPct}
           delay={400}
+        />
+        <StatCard
+          label="Capacity Now"
+          value={stats.capacityNow.pct}
+          valueSuffix="%"
+          subtitle={`${stats.capacityNow.occupied}/${stats.capacityNow.total} seats`}
+          icon={<Gauge className="h-4 w-4" />}
+          accentColor="blue"
+          delay={480}
+        />
+        <StatCard
+          label="Upcoming 2h"
+          value={stats.upcoming2h}
+          subtitle="arrivals"
+          icon={<Clock3 className="h-4 w-4" />}
+          accentColor="amber"
+          delay={560}
         />
       </div>
     </section>

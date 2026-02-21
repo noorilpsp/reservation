@@ -10,7 +10,7 @@ export type ReservationStatus =
 
 export type RiskLevel = "low" | "medium" | "high"
 
-export type ServicePeriod = "breakfast" | "lunch" | "dinner" | "brunch"
+export type ServicePeriod = "breakfast" | "lunch" | "dinner" | "brunch" | "half-day" | "all-day"
 
 export type TagType =
   | "vip"
@@ -112,6 +112,8 @@ export const restaurantConfig = {
   servicePeriods: [
     { id: "lunch" as ServicePeriod, label: "Lunch", start: "11:30", end: "14:30" },
     { id: "dinner" as ServicePeriod, label: "Dinner", start: "17:00", end: "23:00" },
+    { id: "half-day" as ServicePeriod, label: "12h", start: "12:00", end: "24:00" },
+    { id: "all-day" as ServicePeriod, label: "24h", start: "00:00", end: "24:00" },
   ],
   currentTime: "19:23",
   currentDate: "Friday, Jan 17, 2025",
@@ -535,6 +537,17 @@ export function getHeroStats(allReservations: Reservation[]) {
   const tonightReservations = allReservations.filter(
     (r) => r.status !== "cancelled"
   )
+  const nowMinutes = (() => {
+    const [h, m] = restaurantConfig.currentTime.split(":").map(Number)
+    return h * 60 + m
+  })()
+  const currentSlot =
+    capacitySlots.find((slot) => {
+      const [h, m] = slot.time.split(":").map(Number)
+      const slotStart = h * 60 + m
+      return slotStart <= nowMinutes && nowMinutes < slotStart + 30
+    }) ?? capacitySlots[0]
+
   const totalCovers = tonightReservations.reduce((sum, r) => sum + r.partySize, 0)
   const reserved = tonightReservations.filter(
     (r) => r.status === "confirmed" || r.status === "late"
@@ -548,6 +561,7 @@ export function getHeroStats(allReservations: Reservation[]) {
   const noShowPct = tonightReservations.length > 0
     ? ((noShows / tonightReservations.length) * 100).toFixed(1)
     : "0"
+  const upcoming2h = getUpcomingReservations(allReservations, restaurantConfig.currentTime).length
 
   return {
     covers: { current: totalCovers, capacity: totalCapacity },
@@ -557,6 +571,12 @@ export function getHeroStats(allReservations: Reservation[]) {
     waitlist,
     noShows,
     noShowPct,
+    capacityNow: {
+      pct: currentSlot.occupancyPct,
+      occupied: currentSlot.seatsOccupied,
+      total: currentSlot.totalSeats,
+    },
+    upcoming2h,
   }
 }
 

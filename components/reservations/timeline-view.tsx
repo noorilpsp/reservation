@@ -1,39 +1,150 @@
 "use client"
 
 import { useState, useRef, useCallback, useEffect } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useMediaQuery } from "@/hooks/use-media-query"
-import { type ZoomLevel, type TimelineBlock, getSlotWidth } from "@/lib/timeline-data"
+import {
+  restaurantConfig,
+  getCurrentLocalTime24,
+  type ZoomLevel,
+  type TimelineBlock,
+} from "@/lib/timeline-data"
 import { TimelineTopBar } from "./timeline-top-bar"
-import { TimelineCapacityStrip } from "./timeline-capacity-strip"
 import { TimelineGrid } from "./timeline-grid"
 import { TimelineDetailPanel } from "./timeline-detail-panel"
 import { TimelineMobile } from "./timeline-mobile"
 
+function parseTimeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number)
+  return h * 60 + m
+}
+
+function isWithinService(nowTime: string, start: string, end: string): boolean {
+  const nowMin = parseTimeToMinutes(nowTime)
+  const startMin = parseTimeToMinutes(start)
+  let endMin = parseTimeToMinutes(end)
+  let adjustedNow = nowMin
+
+  if (endMin <= startMin) {
+    endMin += 24 * 60
+    if (adjustedNow < startMin) adjustedNow += 24 * 60
+  }
+
+  return adjustedNow >= startMin && adjustedNow < endMin
+}
+
+function startOfLocalDay(date: Date): Date {
+  const next = new Date(date)
+  next.setHours(0, 0, 0, 0)
+  return next
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+function toIsoDate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, "0")
+  const d = String(date.getDate()).padStart(2, "0")
+  return `${y}-${m}-${d}`
+}
+
+function ceilToQuarterHour(time: string): string {
+  const [h, m] = time.split(":").map(Number)
+  const total = h * 60 + m
+  const rounded = Math.ceil(total / 15) * 15
+  const hh = Math.floor((rounded % (24 * 60)) / 60).toString().padStart(2, "0")
+  const mm = (rounded % 60).toString().padStart(2, "0")
+  return `${hh}:${mm}`
+}
+
 export function TimelineView() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
   const [zoom, setZoom] = useState<ZoomLevel>("30min")
   const [zoneFilter, setZoneFilter] = useState("all")
   const [showGhosts, setShowGhosts] = useState(true)
-  const [scrollLeft, setScrollLeft] = useState(0)
+  const [currentTime, setCurrentTime] = useState(() => getCurrentLocalTime24())
+  const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()))
+  const [servicePeriodId, setServicePeriodId] = useState(() => {
+    const now = getCurrentLocalTime24()
+    const activeService = restaurantConfig.servicePeriods.find((period) =>
+      isWithinService(now, period.start, period.end)
+    )
+    return activeService?.id ?? restaurantConfig.servicePeriods.find((period) => period.id === "dinner")?.id ?? restaurantConfig.servicePeriods[0]?.id ?? "dinner"
+  })
   const [selectedBlock, setSelectedBlock] = useState<TimelineBlock | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isMobile = useMediaQuery("(max-width: 767px)")
+
+  const activeService =
+    restaurantConfig.servicePeriods.find((period) => period.id === servicePeriodId)
+    ?? restaurantConfig.servicePeriods[0]
+  const isSelectedDateToday = isSameLocalDay(selectedDate, new Date())
+  const nowTimeForTimeline = isSelectedDateToday ? currentTime : null
 
   const handleBlockClick = useCallback((block: TimelineBlock) => {
     setSelectedBlock(block)
     setDetailOpen(true)
   }, [])
 
-  const handleSlotClick = useCallback((slotIndex: number) => {
-    if (scrollContainerRef.current) {
-      const slotWidth = getSlotWidth(zoom)
-      const targetLeft = slotIndex * slotWidth - scrollContainerRef.current.clientWidth / 2 + slotWidth / 2
-      scrollContainerRef.current.scrollTo({ left: Math.max(0, targetLeft), behavior: "smooth" })
-    }
-  }, [zoom])
+  const handleOpenNewReservation = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString())
+    const defaultTime = isSelectedDateToday && isWithinService(currentTime, activeService.start, activeService.end)
+      ? ceilToQuarterHour(currentTime)
+      : activeService.start
 
-  const handleScrollChange = useCallback((sl: number) => {
-    setScrollLeft(sl)
+    next.set("action", "new")
+    next.set("date", toIsoDate(selectedDate))
+    next.set("service", servicePeriodId)
+    next.set("time", defaultTime)
+    next.delete("id")
+    next.delete("detail")
+    next.delete("table")
+    next.delete("duration")
+    next.delete("durationMax")
+
+    const query = next.toString()
+    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [activeService.end, activeService.start, currentTime, isSelectedDateToday, pathname, router, searchParams, selectedDate, servicePeriodId])
+
+  const handleEmptySlotClick = useCallback((payload: { tableId: string; time: string; duration: number; durationMax: number; partySize: number }) => {
+    const next = new URLSearchParams(searchParams.toString())
+    next.set("action", "new")
+    next.set("time", payload.time)
+    next.set("table", payload.tableId)
+    next.set("date", toIsoDate(selectedDate))
+    next.set("service", servicePeriodId)
+    next.set("partySize", payload.partySize.toString())
+    next.set("duration", payload.duration.toString())
+    next.set("durationMax", payload.durationMax.toString())
+    next.delete("id")
+    next.delete("detail")
+    const query = next.toString()
+    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [pathname, router, searchParams, selectedDate, servicePeriodId])
+
+  const handleScrollChange = useCallback(() => {}, [])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(getCurrentLocalTime24())
+    }, 60000)
+    return () => clearInterval(interval)
   }, [])
 
   // Keyboard shortcuts
@@ -45,16 +156,16 @@ export function TimelineView() {
           setShowGhosts((v) => !v)
           break
         case "n":
-          // New reservation placeholder
+          handleOpenNewReservation()
           break
       }
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
+  }, [handleOpenNewReservation])
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <TimelineTopBar
         zoom={zoom}
         onZoomChange={setZoom}
@@ -62,6 +173,14 @@ export function TimelineView() {
         onZoneFilterChange={setZoneFilter}
         showGhosts={showGhosts}
         onShowGhostsChange={setShowGhosts}
+        servicePeriodId={servicePeriodId}
+        onServicePeriodChange={setServicePeriodId}
+        currentTime={currentTime}
+        selectedDate={selectedDate}
+        onSelectedDateChange={(date) => setSelectedDate(startOfLocalDay(date))}
+        onPreviousDate={() => setSelectedDate((prev) => addDays(prev, -1))}
+        onNextDate={() => setSelectedDate((prev) => addDays(prev, 1))}
+        onNewReservation={handleOpenNewReservation}
       />
 
       {isMobile ? (
@@ -70,23 +189,22 @@ export function TimelineView() {
           onZoneFilterChange={setZoneFilter}
           showGhosts={showGhosts}
           onBlockClick={handleBlockClick}
+          serviceStart={activeService.start}
+          serviceEnd={activeService.end}
         />
       ) : (
-        <>
-          <TimelineCapacityStrip
-            zoom={zoom}
-            scrollLeft={scrollLeft}
-            onSlotClick={handleSlotClick}
-          />
-          <TimelineGrid
-            zoom={zoom}
-            zoneFilter={zoneFilter}
-            showGhosts={showGhosts}
-            onScrollChange={handleScrollChange}
-            scrollContainerRef={scrollContainerRef}
-            onBlockClick={handleBlockClick}
-          />
-        </>
+        <TimelineGrid
+          zoom={zoom}
+          zoneFilter={zoneFilter}
+          showGhosts={showGhosts}
+          onScrollChange={handleScrollChange}
+          scrollContainerRef={scrollContainerRef}
+          onBlockClick={handleBlockClick}
+          onEmptySlotClick={handleEmptySlotClick}
+          serviceStart={activeService.start}
+          serviceEnd={activeService.end}
+          nowTime={nowTimeForTimeline}
+        />
       )}
 
       <TimelineDetailPanel

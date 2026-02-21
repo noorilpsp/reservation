@@ -8,8 +8,6 @@ import { Calendar } from "@/components/ui/calendar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
-  type TimeSlotStatus,
-  timeSlots,
   getDurationForParty,
   formatDuration,
   getCapacityAtTime,
@@ -20,27 +18,89 @@ interface FormBookingDetailsProps {
   time: string
   partySize: number
   duration: number
+  durationMax?: number
+  allTimes?: string[]
+  availableTimes?: string[]
+  tableSeatLimit?: number
+  tableSeatLabel?: string
   onDateChange: (date: string) => void
   onTimeChange: (time: string) => void
   onPartySizeChange: (size: number) => void
   onDurationChange: (duration: number) => void
 }
 
-function slotColor(status: TimeSlotStatus["status"]): string {
-  switch (status) {
-    case "available": return "text-emerald-400"
-    case "busy": return "text-amber-400"
-    case "full": return "text-red-400"
-    case "closed": return "text-muted-foreground/40"
-  }
+const PAST_SLOT_GRACE_MINUTES = 8
+
+function formatTimeLabel(time24: string): string {
+  const [h, m] = time24.split(":").map(Number)
+  const hour12 = h % 12 === 0 ? 12 : h % 12
+  const suffix = h >= 12 ? "PM" : "AM"
+  return `${hour12}:${m.toString().padStart(2, "0")} ${suffix}`
 }
 
-function slotDot(status: TimeSlotStatus["status"]): string {
-  switch (status) {
-    case "available": return "bg-emerald-400"
-    case "busy": return "bg-amber-400"
-    case "full": return "bg-red-400"
-    case "closed": return "bg-muted-foreground/40"
+function toMinutes(timeValue: string): number {
+  const raw = timeValue.trim()
+  if (!raw) return Number.NaN
+
+  const match12 = raw.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/)
+  if (match12) {
+    let h = Number.parseInt(match12[1], 10)
+    const m = Number.parseInt(match12[2], 10)
+    if (h < 1 || h > 12 || m < 0 || m > 59) return Number.NaN
+    const meridiem = match12[3].toUpperCase()
+    if (meridiem === "AM") h = h % 12
+    else h = (h % 12) + 12
+    return h * 60 + m
+  }
+
+  const match24 = raw.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match24) return Number.NaN
+  const h = Number.parseInt(match24[1], 10)
+  const m = Number.parseInt(match24[2], 10)
+  if (h < 0 || h > 23 || m < 0 || m > 59) return Number.NaN
+  return h * 60 + m
+}
+
+function normalizeTime24(timeValue: string): string {
+  const minutes = toMinutes(timeValue)
+  if (!Number.isFinite(minutes)) return timeValue
+  const normalized = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60)
+  const h = Math.floor(normalized / 60).toString().padStart(2, "0")
+  const m = (normalized % 60).toString().padStart(2, "0")
+  return `${h}:${m}`
+}
+
+function getPressureTone(time24: string): {
+  itemClass: string
+  dotClass: string
+  pressureLabel: string | null
+} {
+  const cap = getCapacityAtTime(time24)
+  if (!cap) {
+    return {
+      itemClass: "text-muted-foreground",
+      dotClass: "bg-muted-foreground/50",
+      pressureLabel: null,
+    }
+  }
+  if (cap.occupancyPct >= 90) {
+    return {
+      itemClass: "text-red-300",
+      dotClass: "bg-red-400",
+      pressureLabel: `${cap.occupancyPct}%`,
+    }
+  }
+  if (cap.occupancyPct >= 70) {
+    return {
+      itemClass: "text-amber-300",
+      dotClass: "bg-amber-400",
+      pressureLabel: `${cap.occupancyPct}%`,
+    }
+  }
+  return {
+    itemClass: "text-emerald-300",
+    dotClass: "bg-emerald-400",
+    pressureLabel: `${cap.occupancyPct}%`,
   }
 }
 
@@ -49,15 +109,63 @@ export function FormBookingDetails({
   time,
   partySize,
   duration,
+  durationMax,
+  allTimes = [],
+  availableTimes = [],
+  tableSeatLimit,
+  tableSeatLabel,
   onDateChange,
   onTimeChange,
   onPartySizeChange,
   onDurationChange,
 }: FormBookingDetailsProps) {
   const [calOpen, setCalOpen] = useState(false)
+  const normalizedTime = normalizeTime24(time)
+  const isToday = (() => {
+    const parsed = new Date(`${date}T00:00:00`)
+    if (Number.isNaN(parsed.getTime())) return false
+    const now = new Date()
+    return (
+      parsed.getFullYear() === now.getFullYear()
+      && parsed.getMonth() === now.getMonth()
+      && parsed.getDate() === now.getDate()
+    )
+  })()
+  const nowMinutes = (() => {
+    if (!isToday) return null
+    const now = new Date()
+    return now.getHours() * 60 + now.getMinutes()
+  })()
   const autoDuration = getDurationForParty(partySize)
   const isCustomDuration = duration !== autoDuration
-  const capacity = getCapacityAtTime(time)
+  const capacity = getCapacityAtTime(normalizedTime)
+  const availableSet = new Set(availableTimes.map(normalizeTime24))
+  const renderedTimeSlots = (() => {
+    const base = (allTimes.length > 0 ? allTimes : availableTimes).map(normalizeTime24)
+    const deduped = [...new Set(base)]
+      .filter(Boolean)
+      .filter((value) => Number.isFinite(toMinutes(value)))
+      .sort((a, b) => {
+        const aMin = toMinutes(a)
+        const bMin = toMinutes(b)
+        return aMin - bMin
+      })
+    if (deduped.length === 0) return [normalizedTime]
+    if (deduped.includes(normalizedTime)) return deduped
+    return [...new Set([normalizedTime, ...deduped])].sort((a, b) => {
+      const aMin = toMinutes(a)
+      const bMin = toMinutes(b)
+      return aMin - bMin
+    })
+  })()
+  const durationOptions = (() => {
+    const baseOptions = [60, 75, 90, 105, 120, 135, 150, 180]
+    if (!durationMax) return baseOptions
+    const filtered = baseOptions.filter((m) => m <= durationMax)
+    if (filtered.length > 0) return filtered
+    const snapped = Math.max(15, Math.floor(durationMax / 15) * 15)
+    return [snapped]
+  })()
 
   const dateObj = date ? new Date(date + "T12:00:00") : new Date()
   const dateLabel = dateObj.toLocaleDateString("en-US", {
@@ -109,7 +217,7 @@ export function FormBookingDetails({
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
             Time <span className="text-red-400">*</span>
           </label>
-          <Select value={time} onValueChange={onTimeChange}>
+          <Select value={normalizedTime} onValueChange={onTimeChange}>
             <SelectTrigger className="bg-secondary/50 border-border/60">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
@@ -117,20 +225,60 @@ export function FormBookingDetails({
               </div>
             </SelectTrigger>
             <SelectContent className="max-h-60">
-              {timeSlots.map((slot) => (
+              {renderedTimeSlots.map((slotTime) => {
+                const isUnavailable = !availableSet.has(slotTime) && slotTime !== normalizedTime
+                const slotMinutes = toMinutes(slotTime)
+                const startedAgoMinutes = (
+                  nowMinutes !== null
+                  && Number.isFinite(slotMinutes)
+                  && nowMinutes > slotMinutes
+                  && nowMinutes - slotMinutes <= PAST_SLOT_GRACE_MINUTES
+                )
+                  ? nowMinutes - slotMinutes
+                  : null
+                const tone = isUnavailable
+                  ? {
+                      itemClass: "text-muted-foreground",
+                      dotClass: "bg-zinc-500/80",
+                      pressureLabel: null,
+                    }
+                  : (() => {
+                      const base = getPressureTone(slotTime)
+                      if (base.pressureLabel) return base
+                      // If no capacity snapshot exists for this time, treat open slots as low pressure.
+                      return {
+                        itemClass: "text-emerald-300",
+                        dotClass: "bg-emerald-400",
+                        pressureLabel: "open",
+                      }
+                    })()
+                return (
                 <SelectItem
-                  key={slot.time}
-                  value={slot.time}
-                  disabled={slot.status === "closed"}
-                  className={slotColor(slot.status)}
+                  key={slotTime}
+                  value={slotTime}
+                  disabled={isUnavailable}
+                  className={isUnavailable ? "text-muted-foreground data-[disabled]:opacity-50" : tone.itemClass}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${slotDot(slot.status)}`} />
-                    {slot.label}
-                    {slot.status === "full" && <span className="text-[10px] text-red-400 ml-1">(full)</span>}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                        isUnavailable ? "bg-zinc-500/80" : tone.dotClass
+                      }`}
+                    />
+                    <span>{formatTimeLabel(slotTime)}</span>
+                    {isUnavailable ? (
+                      <span className="ml-1 text-[10px] text-muted-foreground">(unavailable)</span>
+                    ) : startedAgoMinutes !== null ? (
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        (started {startedAgoMinutes}m ago)
+                      </span>
+                    ) : tone.pressureLabel && (
+                      <span className="ml-1 text-[10px] text-muted-foreground">{tone.pressureLabel}</span>
+                    )}
                   </div>
                 </SelectItem>
-              ))}
+                )
+              })}
             </SelectContent>
           </Select>
           {capacity && (
@@ -171,9 +319,17 @@ export function FormBookingDetails({
                   onDurationChange(getDurationForParty(s))
                 }}
                 className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                  partySize === s
-                    ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
-                    : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  tableSeatLimit && s > tableSeatLimit
+                    ? partySize === s
+                      ? "bg-zinc-800/90 text-zinc-300 ring-1 ring-zinc-600/70"
+                      : "bg-zinc-900/60 text-zinc-500 ring-1 ring-zinc-800/80 hover:bg-zinc-900/80"
+                    : tableSeatLimit
+                    ? partySize === s
+                      ? "bg-amber-500/20 text-amber-100 ring-1 ring-amber-400/60 shadow-md shadow-amber-900/20"
+                      : "bg-amber-500/10 text-amber-300/90 ring-1 ring-amber-500/40 hover:bg-amber-500/15"
+                    : partySize === s
+                      ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                      : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
                 }`}
                 aria-pressed={partySize === s}
               >
@@ -188,9 +344,17 @@ export function FormBookingDetails({
                 onDurationChange(getDurationForParty(7))
               }}
               className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                partySize > 6
-                  ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
-                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                tableSeatLimit && tableSeatLimit < 7
+                  ? partySize > 6
+                    ? "bg-zinc-800/90 text-zinc-300 ring-1 ring-zinc-600/70"
+                    : "bg-zinc-900/60 text-zinc-500 ring-1 ring-zinc-800/80 hover:bg-zinc-900/80"
+                  : tableSeatLimit
+                  ? partySize > 6
+                    ? "bg-amber-500/20 text-amber-100 ring-1 ring-amber-400/60 shadow-md shadow-amber-900/20"
+                    : "bg-amber-500/10 text-amber-300/90 ring-1 ring-amber-500/40 hover:bg-amber-500/15"
+                  : partySize > 6
+                    ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                    : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
               }`}
             >
               7+
@@ -220,7 +384,11 @@ export function FormBookingDetails({
                 onPartySizeChange(next)
                 onDurationChange(getDurationForParty(next))
               }}
-              className="p-2 rounded-lg bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              className={`p-2 rounded-lg transition-colors ${
+                tableSeatLimit && partySize + 1 > tableSeatLimit
+                  ? "bg-zinc-900/60 text-zinc-500 hover:bg-zinc-900/80"
+                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
               aria-label="Increase party size"
             >
               <Plus className="h-4 w-4" />
@@ -237,6 +405,11 @@ export function FormBookingDetails({
               Back to 1-6
             </button>
           </div>
+        )}
+        {tableSeatLimit && partySize > 2 && (
+          <p className="mt-1.5 text-[11px] text-amber-300/90">
+            {tableSeatLabel ?? "Selected table"} fits {tableSeatLimit}p.
+          </p>
         )}
       </div>
 
@@ -267,7 +440,7 @@ export function FormBookingDetails({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {[60, 75, 90, 105, 120, 135, 150, 180].map((m) => (
+            {durationOptions.map((m) => (
               <SelectItem key={m} value={m.toString()}>
                 {formatDuration(m)}
                 {m === autoDuration && <span className="text-muted-foreground ml-1">(recommended)</span>}

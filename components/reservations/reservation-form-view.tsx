@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useEffect } from "react"
 import { X, Loader2, Check, Trash2, Clock, ExternalLink, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,12 @@ import { FormConfirmation } from "./form-confirmation"
 import { FormSidePanels } from "./form-side-panels"
 import { FormMobileWizard } from "./form-mobile-wizard"
 import {
+  getBlocksForTable,
+  restaurantConfig as timelineRestaurantConfig,
+  tableLanes as timelineTableLanes,
+  zones as timelineZones,
+} from "@/lib/timeline-data"
+import {
   type GuestProfile,
   type FormTag,
   type ReservationFormData,
@@ -24,23 +30,247 @@ import {
   editFormData,
   sampleEditData,
   guestDatabase,
-  availableTables,
   getDurationForParty,
   getConflictsForSelection,
 } from "@/lib/reservation-form-data"
 
 interface ReservationFormViewProps {
   mode?: "create" | "edit"
+  prefill?: Partial<Pick<ReservationFormData, "date" | "time" | "assignedTable" | "duration" | "partySize">> & {
+    durationMax?: number
+    servicePeriodId?: string
+  }
+  onRequestClose?: () => void
 }
 
-export function ReservationFormView({ mode = "create" }: ReservationFormViewProps) {
+const PAST_SLOT_GRACE_MINUTES = 8
+
+function toMinutes(timeValue: string): number {
+  const raw = timeValue.trim()
+  if (!raw) return Number.NaN
+
+  const match12 = raw.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/)
+  if (match12) {
+    let h = Number.parseInt(match12[1], 10)
+    const m = Number.parseInt(match12[2], 10)
+    if (h < 1 || h > 12 || m < 0 || m > 59) return Number.NaN
+    const meridiem = match12[3].toUpperCase()
+    if (meridiem === "AM") h = h % 12
+    else h = (h % 12) + 12
+    return h * 60 + m
+  }
+
+  const match24 = raw.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match24) return Number.NaN
+
+  const h = Number.parseInt(match24[1], 10)
+  const m = Number.parseInt(match24[2], 10)
+  if (h < 0 || h > 23 || m < 0 || m > 59) return Number.NaN
+  return h * 60 + m
+}
+
+function toTime24(totalMinutes: number): string {
+  const normalized = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60)
+  const h = Math.floor(normalized / 60).toString().padStart(2, "0")
+  const m = (normalized % 60).toString().padStart(2, "0")
+  return `${h}:${m}`
+}
+
+function normalizeTime24(timeValue: string): string {
+  const minutes = toMinutes(timeValue)
+  if (!Number.isFinite(minutes)) return timeValue
+  return toTime24(minutes)
+}
+
+function formatTime12(time24: string): string {
+  const [h, m] = time24.split(":").map(Number)
+  const hour12 = h % 12 === 0 ? 12 : h % 12
+  const suffix = h >= 12 ? "PM" : "AM"
+  return `${hour12}:${m.toString().padStart(2, "0")} ${suffix}`
+}
+
+function getServiceBoundsForTime(time: string, servicePeriodId?: string): { start: number; end: number } {
+  if (servicePeriodId) {
+    const forcedPeriod = timelineRestaurantConfig.servicePeriods.find((period) => period.id === servicePeriodId)
+    if (forcedPeriod) {
+      const start = toMinutes(forcedPeriod.start)
+      let end = toMinutes(forcedPeriod.end)
+      if (end <= start) end += 24 * 60
+      return { start, end }
+    }
+  }
+
+  const selectedMin = toMinutes(time)
+  const matching = timelineRestaurantConfig.servicePeriods
+    .map((period) => {
+      const start = toMinutes(period.start)
+      let end = toMinutes(period.end)
+      if (end <= start) end += 24 * 60
+      let selected = selectedMin
+      if (selected < start) selected += 24 * 60
+      if (selected >= start && selected < end) return { start, end }
+      return undefined
+    })
+    .find((value): value is { start: number; end: number } => typeof value !== "undefined")
+
+  if (matching) return matching
+
+  const fallback = timelineRestaurantConfig.servicePeriods.find((period) => period.id === "dinner")
+    ?? timelineRestaurantConfig.servicePeriods[0]
+  const fallbackStart = toMinutes(fallback.start)
+  let fallbackEnd = toMinutes(fallback.end)
+  if (fallbackEnd <= fallbackStart) fallbackEnd += 24 * 60
+  return { start: fallbackStart, end: fallbackEnd }
+}
+
+function isIsoToday(isoDate?: string): boolean {
+  if (!isoDate) return false
+  const parsed = new Date(`${isoDate}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return false
+  const now = new Date()
+  return (
+    parsed.getFullYear() === now.getFullYear()
+    && parsed.getMonth() === now.getMonth()
+    && parsed.getDate() === now.getDate()
+  )
+}
+
+function getOpenTimes(baseTime: string, servicePeriodId?: string, selectedDate?: string): string[] {
+  const { start, end } = getServiceBoundsForTime(baseTime, servicePeriodId)
+  let effectiveStart = start
+  let graceSlotStart: number | null = null
+  if (isIsoToday(selectedDate)) {
+    const now = new Date()
+    const nowMinutes = now.getHours() * 60 + now.getMinutes()
+    const roundedNow = Math.ceil(nowMinutes / 15) * 15
+    const flooredNow = Math.floor(nowMinutes / 15) * 15
+    effectiveStart = Math.max(start, roundedNow)
+    const startedAgo = nowMinutes - flooredNow
+    const canIncludeGraceSlot = (
+      startedAgo > 0
+      && startedAgo <= PAST_SLOT_GRACE_MINUTES
+      && flooredNow >= start
+      && flooredNow < end
+      && flooredNow < effectiveStart
+    )
+    if (canIncludeGraceSlot) {
+      graceSlotStart = flooredNow
+    }
+  }
+  if (effectiveStart >= end) return []
+  const times: string[] = []
+  if (graceSlotStart !== null) {
+    times.push(toTime24(graceSlotStart))
+  }
+  for (let minute = effectiveStart; minute < end; minute += 15) {
+    times.push(toTime24(minute))
+  }
+  return times
+}
+
+function getAvailableTimesForTable(tableId: string | null, baseTime: string, servicePeriodId?: string, selectedDate?: string): string[] {
+  const openTimes = getOpenTimes(baseTime, servicePeriodId, selectedDate)
+  if (!tableId) return openTimes
+
+  const blocks = getBlocksForTable(tableId)
+  return openTimes.filter((time) => {
+    const t = toMinutes(time)
+    if (!Number.isFinite(t)) return false
+    return !blocks.some((block) => {
+      const start = toMinutes(block.startTime)
+      const end = toMinutes(block.endTime)
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return false
+      return t >= start && t < end
+    })
+  })
+}
+
+function pickNearestAvailableTime(currentTime: string, options: string[]): string {
+  if (options.length === 0) return currentTime
+  const sorted = [...options].sort((a, b) => toMinutes(a) - toMinutes(b))
+  const currentMin = toMinutes(currentTime)
+  return sorted.find((time) => toMinutes(time) >= currentMin) ?? sorted[0]
+}
+
+function resolveDurationConstraints(time: string, tableId: string | null, partySize: number, servicePeriodId?: string) {
+  const recommended = getDurationForParty(partySize)
+  if (!tableId) {
+    return { durationDefault: recommended, durationMax: undefined as number | undefined }
+  }
+
+  const selectedMin = toMinutes(time)
+  if (!Number.isFinite(selectedMin)) {
+    return { durationDefault: recommended, durationMax: undefined as number | undefined }
+  }
+  const normalize = (min: number) => (min < selectedMin ? min + 24 * 60 : min)
+  const selectedNormalized = normalize(selectedMin)
+
+  const nextReservationStart = getBlocksForTable(tableId)
+    .map((block) => {
+      const start = toMinutes(block.startTime)
+      return Number.isFinite(start) ? normalize(start) : undefined
+    })
+    .filter((start): start is number => typeof start === "number")
+    .filter((start) => start > selectedNormalized)
+    .sort((a, b) => a - b)[0]
+
+  const serviceEnd = getServiceBoundsForTime(time, servicePeriodId).end
+
+  const boundary = [nextReservationStart, serviceEnd]
+    .filter((value): value is number => typeof value === "number")
+    .sort((a, b) => a - b)[0]
+
+  if (boundary === undefined) {
+    return { durationDefault: recommended, durationMax: undefined as number | undefined }
+  }
+
+  const availableRaw = Math.max(0, boundary - selectedNormalized)
+  const availableRounded = Math.floor(availableRaw / 15) * 15
+  if (availableRounded < 15) {
+    return { durationDefault: recommended, durationMax: 0 }
+  }
+  const durationDefault = Math.min(recommended, availableRounded)
+
+  return { durationDefault, durationMax: availableRounded }
+}
+
+export function ReservationFormView({ mode = "create", prefill, onRequestClose }: ReservationFormViewProps) {
   const isMobile = useMediaQuery("(max-width: 767px)")
   const isDesktop = useMediaQuery("(min-width: 1280px)")
 
   const isEdit = mode === "edit"
   const editData: EditModeData | null = isEdit ? sampleEditData : null
+  const prefillDurationMax = prefill?.durationMax && Number.isFinite(prefill.durationMax)
+    ? Math.max(15, prefill.durationMax)
+    : undefined
+  const servicePeriodId = prefill?.servicePeriodId
 
-  const [form, setForm] = useState<ReservationFormData>(isEdit ? editFormData : defaultFormData)
+  const clampDuration = useCallback((candidate: number, max?: number): number => {
+    if (!max) return candidate
+    return Math.min(candidate, max)
+  }, [])
+
+  const [form, setForm] = useState<ReservationFormData>(() => {
+    if (isEdit) return { ...editFormData }
+
+    const base: ReservationFormData = { ...defaultFormData }
+    if (prefill?.date) base.date = prefill.date
+    if (prefill?.time) base.time = normalizeTime24(prefill.time)
+    if (prefill?.partySize && Number.isFinite(prefill.partySize)) {
+      base.partySize = Math.max(1, Math.min(12, prefill.partySize))
+      base.duration = getDurationForParty(base.partySize)
+    }
+    if (prefill?.assignedTable) {
+      base.assignedTable = prefill.assignedTable
+      base.tableAssignMode = "manual"
+    }
+    if (prefill?.duration && Number.isFinite(prefill.duration)) {
+      base.duration = clampDuration(prefill.duration, prefillDurationMax)
+    } else {
+      base.duration = clampDuration(base.duration, prefillDurationMax)
+    }
+    return base
+  })
   const [selectedGuest, setSelectedGuest] = useState<GuestProfile | null>(
     isEdit ? guestDatabase.find((g) => g.id === editFormData.guestId) ?? null : null
   )
@@ -48,9 +278,49 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
   const [isSaved, setIsSaved] = useState(false)
   const [showSidePanel, setShowSidePanel] = useState(true)
 
+  const dynamicConstraints = useMemo(
+    () => resolveDurationConstraints(form.time, form.assignedTable, form.partySize, servicePeriodId),
+    [form.time, form.assignedTable, form.partySize, servicePeriodId]
+  )
+  const availableTimes = useMemo(
+    () => getAvailableTimesForTable(form.assignedTable, form.time, servicePeriodId, form.date),
+    [form.assignedTable, form.date, form.time, servicePeriodId]
+  )
+  const openTimes = useMemo(
+    () => getOpenTimes(form.time, servicePeriodId, form.date),
+    [form.date, form.time, servicePeriodId]
+  )
+  const effectiveDurationMax = dynamicConstraints.durationMax
+  const selectedTableMeta = useMemo(
+    () => (form.assignedTable ? timelineTableLanes.find((table) => table.id === form.assignedTable) : undefined),
+    [form.assignedTable]
+  )
+  const tableSeatLimit = selectedTableMeta?.seats
+  const tableSeatLabel = selectedTableMeta?.label
+
   const updateForm = useCallback((partial: Partial<ReservationFormData>) => {
     setForm((prev) => ({ ...prev, ...partial }))
   }, [])
+
+  useEffect(() => {
+    if (availableTimes.length === 0) return
+    if (availableTimes.includes(form.time)) return
+
+    const nextTime = pickNearestAvailableTime(form.time, availableTimes)
+    const nextConstraints = resolveDurationConstraints(nextTime, form.assignedTable, form.partySize, servicePeriodId)
+    updateForm({
+      time: nextTime,
+      duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax),
+    })
+  }, [availableTimes, clampDuration, form.assignedTable, form.partySize, form.time, servicePeriodId, updateForm])
+
+  useEffect(() => {
+    if (!form.assignedTable) return
+    const lane = timelineTableLanes.find((table) => table.id === form.assignedTable)
+    if (!lane) return
+    if (lane.seats >= form.partySize) return
+    updateForm({ assignedTable: null })
+  }, [form.assignedTable, form.partySize, updateForm])
 
   const handleSelectGuest = useCallback(
     (guest: GuestProfile) => {
@@ -107,10 +377,88 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
     }, 1200)
   }, [])
 
-  const bestTable = useMemo(
-    () => availableTables.find((t) => t.matchScore >= 90),
-    []
-  )
+  const bestTable = useMemo(() => {
+    const selectedStart = toMinutes(form.time)
+    if (!Number.isFinite(selectedStart)) return undefined
+    const selectedEnd = selectedStart + form.duration
+    const { end: serviceEnd } = getServiceBoundsForTime(form.time, servicePeriodId)
+
+    const candidates = timelineTableLanes
+      .filter((lane) => lane.seats >= form.partySize)
+      .filter((lane) => form.zonePreference === "any" || lane.zone === form.zonePreference)
+      .map((lane) => {
+        const overlaps = getBlocksForTable(lane.id).filter((block) => {
+          let blockStart = toMinutes(block.startTime)
+          let blockEnd = toMinutes(block.endTime)
+          if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd)) return false
+          if (blockEnd <= blockStart) blockEnd += 24 * 60
+          if (blockStart < selectedStart) {
+            blockStart += 24 * 60
+            blockEnd += 24 * 60
+          }
+          return selectedStart < blockEnd && selectedEnd > blockStart
+        })
+
+        const available = overlaps.length === 0
+        const overlapEnds = overlaps
+          .map((block) => {
+            const blockStart = toMinutes(block.startTime)
+            let end = toMinutes(block.endTime)
+            if (!Number.isFinite(blockStart) || !Number.isFinite(end)) return undefined
+            if (end <= blockStart) end += 24 * 60
+            if (end < selectedStart) end += 24 * 60
+            return end
+          })
+          .filter((value): value is number => typeof value === "number")
+        const nextAvailableMin = available
+          ? selectedStart
+          : Math.max(...overlapEnds)
+
+        const openingInMin = Math.max(0, nextAvailableMin - selectedStart)
+        const capacityDelta = lane.seats - form.partySize
+        const score = (available ? 1000 : Math.max(0, 700 - openingInMin)) - capacityDelta * 4
+
+        return { lane, available, nextAvailableMin, openingInMin, capacityDelta, score }
+      })
+      .sort((a, b) => {
+        if (a.score !== b.score) return b.score - a.score
+        if (a.openingInMin !== b.openingInMin) return a.openingInMin - b.openingInMin
+        if (a.capacityDelta !== b.capacityDelta) return a.capacityDelta - b.capacityDelta
+        return a.lane.label.localeCompare(b.lane.label)
+      })
+
+    const winner = candidates.find((candidate) => candidate.available) ?? candidates[0]
+    if (!winner) return undefined
+
+    const zoneLabel = timelineZones.find((zone) => zone.id === winner.lane.zone)?.name ?? winner.lane.zone
+    const serviceUntil = formatTime12(toTime24(serviceEnd))
+    const availableFrom24 = toTime24(winner.nextAvailableMin)
+    const availableFrom = formatTime12(availableFrom24)
+    const scoreNormalized = Math.max(55, Math.min(99, 85 - winner.capacityDelta * 4 + (winner.available ? 10 : -10)))
+
+    return {
+      id: winner.lane.id,
+      label: winner.lane.label,
+      seats: winner.lane.seats,
+      zone: winner.lane.zone,
+      zoneLabel,
+      server: "Auto",
+      features: winner.capacityDelta === 0 ? ["Exact fit"] : [],
+      availableFrom,
+      availableUntil: serviceUntil,
+      matchScore: scoreNormalized,
+      matchReasons: [
+        winner.available
+          ? `Open for ${formatTime12(form.time)}-${formatTime12(toTime24(selectedEnd))}`
+          : `Busy until ${availableFrom}, then open`,
+        winner.capacityDelta === 0
+          ? `Exact fit (${winner.lane.seats}-top for ${form.partySize})`
+          : `${winner.lane.seats}-top for party of ${form.partySize}`,
+        `Zone: ${zoneLabel}`,
+      ],
+      avoidReasons: winner.available ? undefined : [`Unavailable at requested start (${formatTime12(form.time)})`],
+    }
+  }, [form.duration, form.partySize, form.time, form.zonePreference, servicePeriodId])
 
   const conflicts = useMemo(
     () => getConflictsForSelection(form.time, form.assignedTable, form.partySize, selectedGuest),
@@ -166,10 +514,26 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
             time={form.time}
             partySize={form.partySize}
             duration={form.duration}
+            durationMax={effectiveDurationMax}
+            availableTimes={availableTimes}
+            allTimes={openTimes}
+            tableSeatLimit={tableSeatLimit}
+            tableSeatLabel={tableSeatLabel}
             onDateChange={(date) => updateForm({ date })}
-            onTimeChange={(time) => updateForm({ time })}
-            onPartySizeChange={(partySize) => updateForm({ partySize })}
-            onDurationChange={(duration) => updateForm({ duration })}
+            onTimeChange={(time) => {
+              const nextConstraints = resolveDurationConstraints(time, form.assignedTable, form.partySize, servicePeriodId)
+              updateForm({ time, duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax) })
+            }}
+            onPartySizeChange={(partySize) =>
+              updateForm({
+                partySize,
+                duration: clampDuration(
+                  resolveDurationConstraints(form.time, form.assignedTable, partySize, servicePeriodId).durationDefault,
+                  effectiveDurationMax
+                ),
+              })
+            }
+            onDurationChange={(duration) => updateForm({ duration: clampDuration(duration, effectiveDurationMax) })}
           />
         ),
       },
@@ -182,9 +546,17 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
               assignedTable={form.assignedTable}
               zonePreference={form.zonePreference}
               partySize={form.partySize}
+              selectedTime={form.time}
+              duration={form.duration}
               bestTable={bestTable}
               onModeChange={(mode) => updateForm({ tableAssignMode: mode })}
-              onTableChange={(assignedTable) => updateForm({ assignedTable })}
+              onTableChange={(assignedTable) => {
+                const nextConstraints = resolveDurationConstraints(form.time, assignedTable, form.partySize, servicePeriodId)
+                updateForm({
+                  assignedTable,
+                  duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax),
+                })
+              }}
               onZoneChange={(zonePreference) => updateForm({ zonePreference })}
             />
             <div className="border-t border-border/30 pt-4">
@@ -276,7 +648,13 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
               {showSidePanel ? "Hide suggestions" : "Show suggestions"}
             </Button>
           )}
-          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground" aria-label="Close">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-foreground"
+            aria-label="Close"
+            onClick={onRequestClose}
+          >
             <X className="h-5 w-5" />
           </Button>
         </div>
@@ -339,12 +717,26 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
               time={form.time}
               partySize={form.partySize}
               duration={form.duration}
+              durationMax={effectiveDurationMax}
+              availableTimes={availableTimes}
+              allTimes={openTimes}
+              tableSeatLimit={tableSeatLimit}
+              tableSeatLabel={tableSeatLabel}
               onDateChange={(date) => updateForm({ date })}
-              onTimeChange={(time) => updateForm({ time })}
-              onPartySizeChange={(partySize) => {
-                updateForm({ partySize, duration: getDurationForParty(partySize) })
+              onTimeChange={(time) => {
+                const nextConstraints = resolveDurationConstraints(time, form.assignedTable, form.partySize, servicePeriodId)
+                updateForm({ time, duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax) })
               }}
-              onDurationChange={(duration) => updateForm({ duration })}
+              onPartySizeChange={(partySize) => {
+                updateForm({
+                  partySize,
+                  duration: clampDuration(
+                    resolveDurationConstraints(form.time, form.assignedTable, partySize, servicePeriodId).durationDefault,
+                    effectiveDurationMax
+                  ),
+                })
+              }}
+              onDurationChange={(duration) => updateForm({ duration: clampDuration(duration, effectiveDurationMax) })}
             />
           </section>
 
@@ -358,16 +750,28 @@ export function ReservationFormView({ mode = "create" }: ReservationFormViewProp
               assignedTable={form.assignedTable}
               zonePreference={form.zonePreference}
               partySize={form.partySize}
+              selectedTime={form.time}
+              duration={form.duration}
               bestTable={bestTable}
               onModeChange={(mode: TableAssignMode) => {
                 updateForm({ tableAssignMode: mode })
                 if (mode === "auto" && bestTable) {
-                  updateForm({ assignedTable: bestTable.id })
+                  const nextConstraints = resolveDurationConstraints(form.time, bestTable.id, form.partySize, servicePeriodId)
+                  updateForm({
+                    assignedTable: bestTable.id,
+                    duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax),
+                  })
                 } else if (mode === "unassigned") {
                   updateForm({ assignedTable: null })
                 }
               }}
-              onTableChange={(assignedTable) => updateForm({ assignedTable })}
+              onTableChange={(assignedTable) => {
+                const nextConstraints = resolveDurationConstraints(form.time, assignedTable, form.partySize, servicePeriodId)
+                updateForm({
+                  assignedTable,
+                  duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax),
+                })
+              }}
               onZoneChange={(zonePreference) => updateForm({ zonePreference })}
             />
           </section>

@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react"
 import { TopBar } from "@/components/reservations/top-bar"
 import { HeroStats } from "@/components/reservations/hero-stats"
-import { CapacityBar } from "@/components/reservations/capacity-bar"
+import { TimelineCapacityStrip } from "@/components/reservations/timeline-capacity-strip"
 import { UpcomingReservations } from "@/components/reservations/upcoming-reservations"
 import { WaitlistPanel } from "@/components/reservations/waitlist-panel"
 import { TurnTracker } from "@/components/reservations/turn-tracker"
@@ -11,7 +11,6 @@ import { PaceStrip } from "@/components/reservations/pace-strip"
 import {
   type ServicePeriod,
   reservations,
-  capacitySlots,
   getHeroStats,
 } from "@/lib/reservations-data"
 import { Toaster } from "sonner"
@@ -38,8 +37,14 @@ function ReservationsDashboardPageContent() {
         {/* Section 1: Hero Stats */}
         <HeroStats stats={stats} />
 
-        {/* Section 2: Capacity Bar */}
-        <CapacityBar slots={capacitySlots} />
+        {/* Section 2: Capacity Forecast (Timeline strip style) */}
+        <section aria-label="Capacity forecast" className="px-4 lg:px-6">
+          <TimelineCapacityStrip
+            zoom="30min"
+            sticky={false}
+            synced={false}
+          />
+        </section>
 
         {/* Section 3: Two-Column Layout */}
         <section

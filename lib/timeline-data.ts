@@ -103,13 +103,31 @@ export const zones = [
 export const DINNER_START = "17:00"
 export const DINNER_END   = "23:00"
 export const NOW_TIME     = "19:23"
-export const NOW_LABEL    = "7:23 PM"
+export const NOW_LABEL    = NOW_TIME
 
 export type ZoomLevel = "1hr" | "30min" | "15min"
 
+function parseTimeToMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number)
+  return h * 60 + m
+}
+
+function getRangeBounds(startTime: string, endTime: string): { startMin: number; endMin: number; totalMin: number } {
+  const startMin = parseTimeToMinutes(startTime)
+  let endMin = parseTimeToMinutes(endTime)
+  if (endMin <= startMin) endMin += 24 * 60
+  return { startMin, endMin, totalMin: endMin - startMin }
+}
+
+export function getCurrentLocalTime24(now = new Date()): string {
+  const h = now.getHours().toString().padStart(2, "0")
+  const m = now.getMinutes().toString().padStart(2, "0")
+  return `${h}:${m}`
+}
+
 /** Returns the number of total columns for the dinner range at a given zoom */
-export function getColumnCount(zoom: ZoomLevel): number {
-  const totalMinutes = 360 // 17:00 to 23:00 = 6 hours
+export function getColumnCount(zoom: ZoomLevel, startTime: string = DINNER_START, endTime: string = DINNER_END): number {
+  const { totalMin: totalMinutes } = getRangeBounds(startTime, endTime)
   const slotMinutes = zoom === "1hr" ? 60 : zoom === "30min" ? 30 : 15
   return totalMinutes / slotMinutes
 }
@@ -120,9 +138,11 @@ export function getSlotWidth(zoom: ZoomLevel): number {
 }
 
 /** Converts "HH:MM" to minutes from DINNER_START (17:00) */
-export function timeToOffset(time: string): number {
-  const [h, m] = time.split(":").map(Number)
-  return (h - 17) * 60 + m
+export function timeToOffset(time: string, startTime: string = DINNER_START): number {
+  const startMin = parseTimeToMinutes(startTime)
+  let timeMin = parseTimeToMinutes(time)
+  if (timeMin < startMin) timeMin += 24 * 60
+  return timeMin - startMin
 }
 
 /** Converts offset minutes from DINNER_START to pixel position */
@@ -133,21 +153,32 @@ export function offsetToPixel(offset: number, zoom: ZoomLevel): number {
 }
 
 /** Returns time label strings for the axis */
-export function getTimeLabels(zoom: ZoomLevel): string[] {
+export function getTimeLabels(zoom: ZoomLevel, startTime: string = DINNER_START, endTime: string = DINNER_END): string[] {
   const labels: string[] = []
+  const { startMin, totalMin } = getRangeBounds(startTime, endTime)
   const slotMinutes = zoom === "1hr" ? 60 : zoom === "30min" ? 30 : 15
-  for (let minutes = 0; minutes < 360; minutes += slotMinutes) {
-    const h = 17 + Math.floor(minutes / 60)
-    const m = minutes % 60
-    const h12 = h > 12 ? h - 12 : h
-    labels.push(`${h12}:${m.toString().padStart(2, "0")}`)
+  for (let minutes = 0; minutes < totalMin; minutes += slotMinutes) {
+    const absoluteMin = startMin + minutes
+    const h = Math.floor(absoluteMin / 60) % 24
+    const m = absoluteMin % 60
+    labels.push(`${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`)
   }
   return labels
 }
 
 /** Returns the NOW position in pixels */
-export function getNowPixel(zoom: ZoomLevel): number {
-  return offsetToPixel(timeToOffset(NOW_TIME), zoom)
+export function getNowPixel(
+  zoom: ZoomLevel,
+  nowTime: string | null = NOW_TIME,
+  startTime: string = DINNER_START,
+  endTime: string = DINNER_END
+): number | null {
+  if (!nowTime) return null
+  const { startMin, endMin } = getRangeBounds(startTime, endTime)
+  let nowMin = parseTimeToMinutes(nowTime)
+  if (nowMin < startMin) nowMin += 24 * 60
+  if (nowMin < startMin || nowMin > endMin) return null
+  return offsetToPixel(nowMin - startMin, zoom)
 }
 
 /** Returns capacity data aligned to timeline slots */
@@ -591,6 +622,11 @@ export function formatTime12h(time24: string): string {
   const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
   const ampm = h >= 12 ? "PM" : "AM"
   return `${hour}:${m.toString().padStart(2, "0")} ${ampm}`
+}
+
+export function formatTime24h(time24: string): string {
+  const [h, m] = time24.split(":").map(Number)
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`
 }
 
 export { restaurantConfig, capacitySlots }
