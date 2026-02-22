@@ -202,10 +202,9 @@ export function FormBookingDetails({
   const durationOptions = (() => {
     const baseOptions = [60, 75, 90, 105, 120, 135, 150, 180]
     if (!durationMax) return baseOptions
-    const filtered = baseOptions.filter((m) => m <= durationMax)
-    if (filtered.length > 0) return filtered
-    const snapped = Math.max(15, Math.floor(durationMax / 15) * 15)
-    return [snapped]
+    const snappedMax = Math.max(15, Math.floor(durationMax / 15) * 15)
+    const stepped = Array.from({ length: Math.floor(snappedMax / 15) }, (_, i) => (i + 1) * 15)
+    return stepped.length > 0 ? stepped : [15]
   })()
   const selectedFit = timeFitByTime[normalizedTime]
 

@@ -29,12 +29,14 @@ import {
 } from "@/components/ui/sheet"
 import { ReservationDetailPanel } from "@/components/reservations/reservation-detail-panel"
 import { ReservationFormView } from "@/components/reservations/reservation-form-view"
-import { getReservationByStatus } from "@/lib/detail-modal-data"
+import { getReservationById, getReservationByStatus } from "@/lib/detail-modal-data"
 import {
   capacitySlots,
   reservations,
   restaurantConfig,
+  type Reservation,
 } from "@/lib/reservations-data"
+import { guestDatabase, type BookingChannel, type FormTag } from "@/lib/reservation-form-data"
 import { activeWaitlist } from "@/lib/waitlist-data"
 import { cn } from "@/lib/utils"
 
@@ -75,6 +77,68 @@ function timeToMinutes(time24: string): number {
   return h * 60 + m
 }
 
+function normalizeZonePreference(rawZone?: string | null): "any" | "main" | "patio" | "private" | undefined {
+  if (!rawZone) return undefined
+  const normalized = rawZone.trim().toLowerCase()
+  if (normalized === "main" || normalized.includes("main")) return "main"
+  if (normalized === "patio") return "patio"
+  if (normalized === "private" || normalized.includes("private")) return "private"
+  if (normalized === "any" || normalized.includes("no pref")) return "any"
+  return undefined
+}
+
+function mapBookedViaToChannel(raw?: string | null): BookingChannel | undefined {
+  if (!raw) return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized.includes("concierge")) return "concierge"
+  if (normalized.includes("phone")) return "phone"
+  if (normalized.includes("google")) return "google"
+  if (normalized.includes("opentable")) return "opentable"
+  if (normalized.includes("instagram")) return "instagram"
+  if (normalized.includes("app")) return "app"
+  if (normalized.includes("website") || normalized.includes("web")) return "website"
+  if (normalized.includes("direct") || normalized.includes("walk")) return "direct"
+  return "direct"
+}
+
+function inferServicePeriodIdFromTime(time?: string): string | undefined {
+  if (!time) return undefined
+  const timeMin = timeToMinutes(time)
+  if (!Number.isFinite(timeMin)) return undefined
+
+  const match = restaurantConfig.servicePeriods.find((period) => {
+    const start = timeToMinutes(period.start)
+    let end = timeToMinutes(period.end)
+    let current = timeMin
+    if (end <= start) {
+      end += 24 * 60
+      if (current < start) current += 24 * 60
+    }
+    return current >= start && current < end
+  })
+  return match?.id
+}
+
+function mapOverviewTagsToFormTags(tags: Reservation["tags"]): FormTag[] {
+  const mapped = tags.flatMap<FormTag>((tag) => {
+    switch (tag.type) {
+      case "vip":
+      case "birthday":
+      case "anniversary":
+      case "allergy":
+      case "high-value":
+      case "first-timer":
+        return [tag.type]
+      case "wheelchair":
+        return ["accessible"]
+      case "window":
+      default:
+        return []
+    }
+  })
+  return [...new Set(mapped)]
+}
+
 export function ReservationsShellLayout({ children }: ReservationsShellLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -88,10 +152,15 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
 
   const action = searchParams.get("action")
   const detail = searchParams.get("detail")
+  const actionId = searchParams.get("id") ?? detail
   const isActionOpen = action === "new" || action === "edit"
   const isDetailOpen = Boolean(detail)
   const prefillDate = searchParams.get("date")
   const prefillTime = searchParams.get("time")
+  const prefillGuestName = searchParams.get("guestName")
+  const prefillPhone = searchParams.get("phone")
+  const prefillEmail = searchParams.get("email")
+  const prefillChannel = searchParams.get("channel")
   const prefillTable = searchParams.get("table")
   const prefillZone = searchParams.get("zone")
   const prefillService = searchParams.get("service")
@@ -102,20 +171,100 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
   const prefillDuration = prefillDurationRaw ? Number.parseInt(prefillDurationRaw, 10) : undefined
   const prefillDurationMax = prefillDurationMaxRaw ? Number.parseInt(prefillDurationMaxRaw, 10) : undefined
   const mode = action === "edit" ? "edit" : "create"
-  const prefill =
-    action === "new"
-      ? {
-          date: prefillDate ?? undefined,
-          time: prefillTime ?? undefined,
-          assignedTable: prefillTable ?? undefined,
-          zonePreference: prefillZone ?? undefined,
-          servicePeriodId: prefillService ?? undefined,
-          partySize: Number.isFinite(prefillPartySize) ? prefillPartySize : undefined,
-          duration: Number.isFinite(prefillDuration) ? prefillDuration : undefined,
-          durationMax: Number.isFinite(prefillDurationMax) ? prefillDurationMax : undefined,
-        }
-      : undefined
-  const formRenderKey = `${mode}:${prefillDate ?? ""}:${prefillTime ?? ""}:${prefillTable ?? ""}:${prefillZone ?? ""}:${prefillService ?? ""}:${prefillPartySize ?? ""}:${prefillDuration ?? ""}:${prefillDurationMax ?? ""}`
+  const editSourceReservation = useMemo(
+    () => (actionId ? reservations.find((reservation) => reservation.id === actionId) : undefined),
+    [actionId]
+  )
+  const editDetailReservation = useMemo(
+    () => (actionId ? getReservationById(actionId) : undefined),
+    [actionId]
+  )
+  const newPrefill = useMemo(
+    () => (
+      action === "new"
+        ? {
+            date: prefillDate ?? undefined,
+            time: prefillTime ?? undefined,
+            assignedTable: prefillTable ?? undefined,
+            zonePreference: normalizeZonePreference(prefillZone),
+            servicePeriodId: prefillService ?? undefined,
+            partySize: Number.isFinite(prefillPartySize) ? prefillPartySize : undefined,
+            duration: Number.isFinite(prefillDuration) ? prefillDuration : undefined,
+            durationMax: Number.isFinite(prefillDurationMax) ? prefillDurationMax : undefined,
+          }
+        : undefined
+    ),
+    [action, prefillDate, prefillDuration, prefillDurationMax, prefillPartySize, prefillService, prefillTable, prefillTime, prefillZone]
+  )
+  const editPrefill = useMemo(() => {
+    if (action !== "edit") return undefined
+    if (!actionId) return undefined
+
+    const date = editDetailReservation?.date ?? prefillDate ?? undefined
+    const time = editDetailReservation?.time ?? editSourceReservation?.time ?? prefillTime ?? undefined
+    const assignedTable = editDetailReservation?.table ?? editSourceReservation?.table ?? prefillTable ?? undefined
+    const zonePreference = (
+      normalizeZonePreference(prefillZone)
+      ?? normalizeZonePreference(editDetailReservation?.zone)
+      ?? (assignedTable ? normalizeZonePreference(editDetailReservation?.zone) ?? "main" : "any")
+    )
+    const allergyDetail = (
+      editSourceReservation?.tags.find((tag) => tag.type === "allergy")?.detail
+      ?? undefined
+    )
+    const guestId = (() => {
+      if (!editSourceReservation) return undefined
+      const byPhone = editSourceReservation.phone
+        ? guestDatabase.find((guest) => guest.phone === editSourceReservation.phone)
+        : undefined
+      if (byPhone) return byPhone.id
+      const byName = guestDatabase.find((guest) => guest.name.toLowerCase() === editSourceReservation.guestName.toLowerCase())
+      return byName?.id
+    })()
+
+    return {
+      guestName: editDetailReservation?.guestName ?? editSourceReservation?.guestName ?? prefillGuestName ?? undefined,
+      guestId,
+      phone: editDetailReservation?.guestPhone ?? editSourceReservation?.phone ?? prefillPhone ?? undefined,
+      email: editDetailReservation?.guestEmail ?? prefillEmail ?? undefined,
+      date,
+      time,
+      partySize: editDetailReservation?.partySize ?? editSourceReservation?.partySize ?? undefined,
+      duration: editDetailReservation?.duration ?? (Number.isFinite(prefillDuration) ? prefillDuration : undefined),
+      tableAssignMode: assignedTable ? "manual" as const : "unassigned" as const,
+      assignedTable,
+      zonePreference,
+      tags: editSourceReservation ? mapOverviewTagsToFormTags(editSourceReservation.tags) : undefined,
+      allergyDetail,
+      notes: editSourceReservation?.notes ?? undefined,
+      channel: mapBookedViaToChannel(prefillChannel ?? editSourceReservation?.bookedVia ?? editDetailReservation?.channel),
+      sendSms: Boolean(editSourceReservation?.confirmationSent),
+      sendEmail: Boolean(editSourceReservation?.confirmationSent),
+      requireDeposit: editDetailReservation?.depositStatus === "required" || editDetailReservation?.depositStatus === "paid",
+      depositAmount: editDetailReservation?.deposit ? String(editDetailReservation.deposit) : "",
+      addToCalendar: false,
+      servicePeriodId: prefillService ?? inferServicePeriodIdFromTime(time),
+      durationMax: Number.isFinite(prefillDurationMax) ? prefillDurationMax : undefined,
+    }
+  }, [
+    action,
+    actionId,
+    editDetailReservation,
+    editSourceReservation,
+    prefillDate,
+    prefillEmail,
+    prefillGuestName,
+    prefillPhone,
+    prefillChannel,
+    prefillDuration,
+    prefillDurationMax,
+    prefillService,
+    prefillTable,
+    prefillTime,
+    prefillZone,
+  ])
+  const prefill = action === "new" ? newPrefill : action === "edit" ? editPrefill : undefined
+  const formRenderKey = `${mode}:${actionId ?? ""}:${prefill?.guestName ?? ""}:${prefill?.date ?? ""}:${prefill?.time ?? ""}:${prefill?.assignedTable ?? ""}:${prefill?.zonePreference ?? ""}:${prefill?.servicePeriodId ?? ""}:${prefill?.partySize ?? ""}:${prefill?.duration ?? ""}:${prefill?.durationMax ?? ""}`
 
   const shellMetrics = useMemo(() => {
     const nowMinutes = timeToMinutes(restaurantConfig.currentTime)
@@ -190,14 +339,17 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
     })
   }, [updateSearch])
 
-  const reservation = getReservationByStatus("arriving")
+  const reservation = useMemo(() => {
+    if (!detail) return getReservationByStatus("arriving")
+    return getReservationById(detail) ?? getReservationByStatus("arriving")
+  }, [detail])
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-zinc-950">
       <header className="sticky top-0 z-40 border-b border-zinc-800/60 bg-zinc-950/85 backdrop-blur-xl">
-        <div className="px-1 py-1.5 md:px-2 lg:px-3">
+        <div className="px-2 py-2 md:px-3 lg:px-4">
           <div className="overflow-x-auto scrollbar-none">
-            <div className="mx-auto flex w-max items-center gap-1" role="tablist" aria-label="Reservation views">
+            <div className="mx-auto flex w-max items-center gap-1.5" role="tablist" aria-label="Reservation views">
               {RESERVATION_LENSES.map((lens) => {
                 const selected = activeLens.href === lens.href
                 const lensMetric = shellMetrics.lensMetrics[lens.id]
@@ -209,18 +361,20 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
                     role="tab"
                     aria-selected={selected}
                     className={cn(
-                      "group inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[10px] font-medium transition-all",
+                      "group inline-flex h-9 shrink-0 items-center gap-1.5 rounded-2xl border px-3 text-xs font-semibold tracking-[0.01em] transition-all md:h-10 md:px-3.5",
                       selected
-                        ? "border-emerald-400/70 bg-[linear-gradient(135deg,rgba(16,185,129,0.22),rgba(16,185,129,0.08))] text-emerald-200 shadow-[0_0_18px_rgba(16,185,129,0.28)]"
-                        : "border-zinc-800/80 bg-zinc-900/70 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/90 hover:text-zinc-200"
+                        ? "border-emerald-400/70 bg-[linear-gradient(135deg,rgba(16,185,129,0.26),rgba(5,150,105,0.14))] text-emerald-100 shadow-[0_0_22px_rgba(16,185,129,0.33)] ring-1 ring-emerald-500/30"
+                        : "border-zinc-800/90 bg-[linear-gradient(160deg,rgba(39,39,42,0.76),rgba(24,24,27,0.8))] text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800/85 hover:text-zinc-100"
                     )}
                   >
-                    <LensIcon className={cn("h-3 w-3", selected ? "text-emerald-300" : "text-zinc-500")} />
+                    <LensIcon className={cn("h-4 w-4", selected ? "text-emerald-300" : "text-zinc-500")} />
                     <span>{lens.label}</span>
                     <span
                       className={cn(
-                        "rounded-full px-1 py-0 text-[9px] font-semibold tabular-nums",
-                        selected ? "bg-emerald-500/20 text-emerald-200" : "bg-zinc-800/80 text-zinc-400"
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                        selected
+                          ? "bg-emerald-500/25 text-emerald-100 ring-1 ring-emerald-400/35"
+                          : "bg-zinc-800/90 text-zinc-300 ring-1 ring-zinc-700/70"
                       )}
                     >
                       {lensMetric.value}
@@ -243,7 +397,7 @@ export function ReservationsShellLayout({ children }: ReservationsShellLayoutPro
       />
 
       <Dialog open={isActionOpen && isDesktop} onOpenChange={(open) => !open && closeAction()}>
-        <DialogContent showClose={false} className="w-[min(1200px,96vw)] max-w-none overflow-hidden border-zinc-800 bg-zinc-950 p-0">
+        <DialogContent showClose={false} className="w-[min(1320px,98vw)] max-w-none overflow-hidden border-zinc-800 bg-zinc-950 p-0">
           <DialogHeader className="sr-only">
             <DialogTitle>{action === "edit" ? "Edit Reservation" : "New Reservation"}</DialogTitle>
             <DialogDescription>Reservation form</DialogDescription>

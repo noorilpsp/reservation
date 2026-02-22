@@ -41,12 +41,6 @@ function startOfLocalDay(date: Date): Date {
   return next
 }
 
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
-}
-
 function isSameLocalDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -201,11 +195,8 @@ export function TimelineView() {
         onShowGhostsChange={setShowGhosts}
         servicePeriodId={servicePeriodId}
         onServicePeriodChange={setServicePeriodId}
-        currentTime={currentTime}
         selectedDate={selectedDate}
         onSelectedDateChange={(date) => setSelectedDate(startOfLocalDay(date))}
-        onPreviousDate={() => setSelectedDate((prev) => addDays(prev, -1))}
-        onNextDate={() => setSelectedDate((prev) => addDays(prev, 1))}
         onNewReservation={handleOpenNewReservation}
       />
 

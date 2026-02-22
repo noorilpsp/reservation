@@ -204,7 +204,11 @@ export function ReservationBlock({
         <ContextMenuItem className="text-foreground focus:bg-zinc-800 focus:text-foreground">Assign Server</ContextMenuItem>
         <ContextMenuSeparator className="bg-zinc-800" />
         <ContextMenuItem className="text-foreground focus:bg-zinc-800 focus:text-foreground" asChild>
-          <Link href="?action=edit&id=res_001">Edit Reservation</Link>
+          <Link
+            href={`?action=edit&id=${block.id}&guestName=${encodeURIComponent(block.guestName)}&time=${block.startTime}&partySize=${block.partySize}&table=${block.table}`}
+          >
+            Edit Reservation
+          </Link>
         </ContextMenuItem>
         <ContextMenuItem className="text-foreground focus:bg-zinc-800 focus:text-foreground">Move to Waitlist</ContextMenuItem>
         <ContextMenuSeparator className="bg-zinc-800" />

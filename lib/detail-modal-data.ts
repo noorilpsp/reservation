@@ -1,3 +1,8 @@
+import {
+  reservations as overviewReservations,
+  type Reservation as OverviewReservation,
+} from "./reservations-data"
+
 // ── Reservation Detail Modal Data Layer ──────────────────────────────────────
 
 export type DetailStatus =
@@ -539,6 +544,145 @@ const cancelledBase: DetailReservation = {
   cancelledAt: "2025-01-17T17:00:00",
   cancelReason: "guest_request",
   cancelNote: "Family emergency",
+}
+
+function mapOverviewStatus(status: OverviewReservation["status"]): DetailStatus {
+  switch (status) {
+    case "confirmed":
+      return "confirmed"
+    case "late":
+      return "late"
+    case "seated":
+      return "seated"
+    case "completed":
+      return "completed"
+    case "no-show":
+      return "no_show"
+    case "cancelled":
+      return "cancelled"
+    default:
+      return "confirmed"
+  }
+}
+
+function deriveZoneFromTable(table: string | null): string {
+  if (!table) return "Main Dining"
+  const tableNumber = Number.parseInt(table.replace(/[^\d]/g, ""), 10)
+  if (!Number.isFinite(tableNumber)) return "Main Dining"
+  if (tableNumber <= 17) return "Main Dining"
+  if (tableNumber <= 22) return "Patio"
+  return "Private Room"
+}
+
+function mapOverviewTags(tags: OverviewReservation["tags"]): string[] {
+  return [...new Set(tags.map((tag) => {
+    if (tag.type === "allergy") {
+      const detail = (tag.detail ?? "").toLowerCase()
+      if (detail.includes("shellfish")) return "shellfish-allergy"
+      return "allergy"
+    }
+    return tag.type
+  }))]
+}
+
+function buildDetailFromOverview(reservation: OverviewReservation): DetailReservation {
+  const status = mapOverviewStatus(reservation.status)
+  const base = getReservationByStatus(status)
+  const mappedTags = mapOverviewTags(reservation.tags)
+  const duration = (
+    reservation.partySize <= 2 ? 75
+    : reservation.partySize <= 4 ? 90
+    : reservation.partySize <= 6 ? 105
+    : 120
+  )
+  const safeGuestEmail = `${reservation.guestName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")}@guest.local`
+  const fallbackTableCapacity = (
+    reservation.table
+      ? Math.max(reservation.partySize, base.tableCapacity ?? reservation.partySize)
+      : null
+  )
+
+  const createdAt = base.createdAt
+  const confirmedAt = reservation.confirmationSent
+    ? (base.confirmedAt ?? `${base.date}T12:00:00`)
+    : null
+
+  return {
+    ...base,
+    id: reservation.id,
+    guestName: reservation.guestName,
+    guestPhone: reservation.phone ?? base.guestPhone,
+    guestEmail: safeGuestEmail || base.guestEmail,
+    partySize: reservation.partySize,
+    time: reservation.time,
+    duration,
+    table: reservation.table,
+    tableCapacity: fallbackTableCapacity,
+    tableFeature: reservation.tags.some((tag) => tag.type === "window") ? "Window" : base.tableFeature,
+    zone: deriveZoneFromTable(reservation.table),
+    status,
+    riskScore: reservation.riskScore ?? (
+      reservation.risk === "high" ? 72
+      : reservation.risk === "medium" ? 42
+      : 12
+    ),
+    riskLevel: reservation.risk,
+    channel: reservation.bookedVia ?? base.channel,
+    confirmedAt,
+    confirmedVia: reservation.confirmationSent ? (base.confirmedVia ?? "sms") : null,
+    tags: mappedTags,
+    notes: reservation.notes
+      ? [
+          {
+            type: "staff_note",
+            text: reservation.notes,
+            author: "Host",
+            role: "Host",
+            timestamp: createdAt,
+          },
+        ]
+      : base.notes,
+    history: [
+      {
+        event: "created",
+        detail: `Reservation created via ${reservation.bookedVia ?? "manual entry"}`,
+        actor: "System",
+        timestamp: createdAt,
+      },
+      ...(confirmedAt
+        ? [
+            {
+              event: "confirmed",
+              detail: "Guest confirmed reservation",
+              actor: "Guest",
+              timestamp: confirmedAt,
+            } satisfies HistoryEvent,
+          ]
+        : []),
+    ],
+    serviceStatus: status === "seated" ? (base.serviceStatus ?? sarahChen.serviceStatus) : null,
+    finalCheck: status === "completed" ? (base.finalCheck ?? 89) : undefined,
+    actualDuration: status === "completed" ? (base.actualDuration ?? duration) : undefined,
+    rating: status === "completed" ? (base.rating ?? null) : undefined,
+    noShowHistory: status === "no_show" ? (base.noShowHistory ?? []) : undefined,
+    depositCharged: status === "no_show" ? (base.depositCharged ?? false) : undefined,
+    cancelledAt: status === "cancelled" ? (base.cancelledAt ?? createdAt) : undefined,
+    cancelReason: status === "cancelled" ? (base.cancelReason ?? "guest_request") : undefined,
+    cancelNote: status === "cancelled" ? (base.cancelNote ?? "Cancelled by guest") : undefined,
+  }
+}
+
+export function getReservationById(id: string): DetailReservation | undefined {
+  const staticMatch = [sarahChen, completedBase, noShowBase, cancelledBase].find((reservation) => reservation.id === id)
+  if (staticMatch) return staticMatch
+
+  const overviewMatch = overviewReservations.find((reservation) => reservation.id === id)
+  if (overviewMatch) return buildDetailFromOverview(overviewMatch)
+
+  return undefined
 }
 
 // ── State Map ───────────────────────────────────────────────────────────────

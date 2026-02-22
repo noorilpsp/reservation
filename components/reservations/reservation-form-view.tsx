@@ -34,12 +34,38 @@ import {
   getConflictsForSelection,
 } from "@/lib/reservation-form-data"
 
+type ReservationFormPrefill = Partial<
+  Pick<
+    ReservationFormData,
+    | "guestName"
+    | "guestId"
+    | "phone"
+    | "email"
+    | "date"
+    | "time"
+    | "partySize"
+    | "duration"
+    | "tableAssignMode"
+    | "assignedTable"
+    | "zonePreference"
+    | "tags"
+    | "allergyDetail"
+    | "notes"
+    | "channel"
+    | "sendSms"
+    | "sendEmail"
+    | "requireDeposit"
+    | "depositAmount"
+    | "addToCalendar"
+  >
+> & {
+  durationMax?: number
+  servicePeriodId?: string
+}
+
 interface ReservationFormViewProps {
   mode?: "create" | "edit"
-  prefill?: Partial<Pick<ReservationFormData, "date" | "time" | "assignedTable" | "zonePreference" | "duration" | "partySize">> & {
-    durationMax?: number
-    servicePeriodId?: string
-  }
+  prefill?: ReservationFormPrefill
   onRequestClose?: () => void
 }
 
@@ -182,7 +208,12 @@ function getOpenTimes(baseTime: string, servicePeriodId?: string, selectedDate?:
       graceSlotStart = flooredNow
     }
   }
-  if (effectiveStart >= end) return []
+  // If the selected service period for today is already over, keep showing the
+  // full service window instead of collapsing the picker to a single fallback time.
+  if (effectiveStart >= end) {
+    effectiveStart = start
+    graceSlotStart = null
+  }
   const times: string[] = []
   if (graceSlotStart !== null) {
     times.push(toTime24(graceSlotStart))
@@ -330,6 +361,8 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
     ? Math.max(15, prefill.durationMax)
     : undefined
   const servicePeriodId = prefill?.servicePeriodId
+  const prefillTimeNormalized = prefill?.time ? normalizeTime24(prefill.time) : undefined
+  const prefillAssignedTable = prefill?.assignedTable ?? null
 
   const clampDuration = useCallback((candidate: number, max?: number): number => {
     if (!max) return candidate
@@ -337,36 +370,77 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
   }, [])
 
   const [form, setForm] = useState<ReservationFormData>(() => {
-    if (isEdit) return { ...editFormData }
+    const base: ReservationFormData = isEdit ? { ...editFormData } : { ...defaultFormData }
 
-    const base: ReservationFormData = { ...defaultFormData }
-    if (prefill?.date) base.date = prefill.date
-    if (prefill?.time) base.time = normalizeTime24(prefill.time)
-    if (prefill?.zonePreference) base.zonePreference = prefill.zonePreference
-    if (prefill?.partySize && Number.isFinite(prefill.partySize)) {
+    if (typeof prefill?.guestName !== "undefined") base.guestName = prefill.guestName
+    if (typeof prefill?.guestId !== "undefined") base.guestId = prefill.guestId
+    if (typeof prefill?.phone !== "undefined") base.phone = prefill.phone
+    if (typeof prefill?.email !== "undefined") base.email = prefill.email
+    if (typeof prefill?.date !== "undefined") base.date = prefill.date
+    if (typeof prefill?.time !== "undefined" && prefill.time) base.time = normalizeTime24(prefill.time)
+    if (typeof prefill?.zonePreference !== "undefined" && prefill.zonePreference) base.zonePreference = prefill.zonePreference
+    if (typeof prefill?.tags !== "undefined") base.tags = [...prefill.tags]
+    if (typeof prefill?.allergyDetail !== "undefined") base.allergyDetail = prefill.allergyDetail
+    if (typeof prefill?.notes !== "undefined") base.notes = prefill.notes
+    if (typeof prefill?.channel !== "undefined") base.channel = prefill.channel
+    if (typeof prefill?.sendSms !== "undefined") base.sendSms = prefill.sendSms
+    if (typeof prefill?.sendEmail !== "undefined") base.sendEmail = prefill.sendEmail
+    if (typeof prefill?.requireDeposit !== "undefined") base.requireDeposit = prefill.requireDeposit
+    if (typeof prefill?.depositAmount !== "undefined") base.depositAmount = prefill.depositAmount
+    if (typeof prefill?.addToCalendar !== "undefined") base.addToCalendar = prefill.addToCalendar
+
+    if (typeof prefill?.partySize === "number" && Number.isFinite(prefill.partySize)) {
       base.partySize = Math.max(1, Math.min(12, prefill.partySize))
       base.duration = getDurationForParty(base.partySize)
     }
-    if (prefill?.assignedTable) {
-      base.assignedTable = prefill.assignedTable
-      base.tableAssignMode = "manual"
-      if (!prefill?.zonePreference) {
+
+    if (typeof prefill?.assignedTable !== "undefined") {
+      base.assignedTable = prefill.assignedTable ?? null
+      if (!prefill?.tableAssignMode && prefill.assignedTable) {
+        base.tableAssignMode = "manual"
+      }
+      if (!prefill?.zonePreference && prefill.assignedTable) {
         const prefilledLane = timelineTableLanes.find((table) => table.id === prefill.assignedTable)
         if (prefilledLane) {
           base.zonePreference = prefilledLane.zone
         }
       }
     }
-    if (prefill?.duration && Number.isFinite(prefill.duration)) {
+
+    if (typeof prefill?.tableAssignMode !== "undefined") {
+      base.tableAssignMode = prefill.tableAssignMode
+    }
+
+    if (typeof prefill?.duration === "number" && Number.isFinite(prefill.duration)) {
       base.duration = clampDuration(prefill.duration, prefillDurationMax)
     } else {
       base.duration = clampDuration(base.duration, prefillDurationMax)
     }
+
     return base
   })
-  const [selectedGuest, setSelectedGuest] = useState<GuestProfile | null>(
-    isEdit ? guestDatabase.find((g) => g.id === editFormData.guestId) ?? null : null
-  )
+  const [selectedGuest, setSelectedGuest] = useState<GuestProfile | null>(() => {
+    const prefilledGuestId = prefill?.guestId ?? (isEdit ? editFormData.guestId : null)
+    if (prefilledGuestId) {
+      const guestById = guestDatabase.find((guest) => guest.id === prefilledGuestId)
+      if (guestById) return guestById
+    }
+
+    const prefilledPhone = prefill?.phone ?? (isEdit ? editFormData.phone : "")
+    if (prefilledPhone) {
+      const guestByPhone = guestDatabase.find((guest) => guest.phone === prefilledPhone)
+      if (guestByPhone) return guestByPhone
+    }
+
+    const prefilledName = prefill?.guestName ?? (isEdit ? editFormData.guestName : "")
+    if (prefilledName) {
+      const lowered = prefilledName.toLowerCase().trim()
+      const guestByName = guestDatabase.find((guest) => guest.name.toLowerCase() === lowered)
+      if (guestByName) return guestByName
+    }
+
+    return null
+  })
   const [isSaving, setIsSaving] = useState(false)
   const [isSaved, setIsSaved] = useState(false)
   const [showSidePanel, setShowSidePanel] = useState(true)
@@ -391,7 +465,16 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
     () => `${ZONE_LABELS[form.zonePreference] ?? "All zones"} · ${form.partySize}p`,
     [form.partySize, form.zonePreference]
   )
-  const effectiveDurationMax = dynamicConstraints.durationMax
+  const useSlotPrefillDurationMax = (
+    mode === "create"
+    && typeof prefillDurationMax === "number"
+    && Number.isFinite(prefillDurationMax)
+    && form.time === prefillTimeNormalized
+    && form.assignedTable === prefillAssignedTable
+  )
+  const effectiveDurationMax = useSlotPrefillDurationMax
+    ? Math.max(prefillDurationMax, dynamicConstraints.durationMax ?? 0)
+    : dynamicConstraints.durationMax
   const selectedTableMeta = useMemo(
     () => (form.assignedTable ? timelineTableLanes.find((table) => table.id === form.assignedTable) : undefined),
     [form.assignedTable]
@@ -716,7 +799,7 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
 
   // ── Desktop / Tablet Layout ──────────────────────────────────────────────
   return (
-    <div className="h-full bg-background flex flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border/40">
         <div>
@@ -759,9 +842,9 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Left: Form */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+        <div className="min-w-0 flex-1 space-y-8 overflow-x-hidden overflow-y-auto p-6">
           {/* Booking Details */}
           <section>
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4 pb-2 border-b border-border/30">
@@ -964,7 +1047,7 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
 
         {/* Right: Suggestions (desktop always, tablet toggle) */}
         {(isDesktop || showSidePanel) && (
-          <div className="w-[380px] shrink-0 border-l border-border/40 overflow-y-auto p-4 bg-background/50">
+          <div className="w-[340px] shrink-0 overflow-y-auto border-l border-border/40 bg-background/50 p-4 2xl:w-[380px]">
             <FormSidePanels
               formData={form}
               guest={selectedGuest}

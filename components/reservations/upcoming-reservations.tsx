@@ -66,10 +66,12 @@ function ReservationCard({
   reservation,
   index,
   onOpenDetail,
+  onAssignTable,
 }: {
   reservation: Reservation
   index: number
   onOpenDetail: (reservationId: string) => void
+  onAssignTable: (reservationId: string) => void
 }) {
   const isLate =
     reservation.status === "confirmed" &&
@@ -84,6 +86,8 @@ function ReservationCard({
     const [ch, cm] = restaurantConfig.currentTime.split(":").map(Number)
     return ch * 60 + cm - (rh * 60 + rm)
   })()
+
+  const isUnassigned = !reservation.table
 
   return (
     <div
@@ -174,20 +178,25 @@ function ReservationCard({
       <div className="mt-2 flex gap-2 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
         <Button
           size="sm"
-          className="h-7 bg-emerald-600 px-2.5 text-[11px] text-emerald-50 hover:bg-emerald-500"
+          className={
+            isUnassigned
+              ? "h-7 border border-amber-500/40 bg-amber-500/15 px-2.5 text-[11px] text-amber-200 hover:bg-amber-500/20"
+              : "h-7 bg-emerald-600 px-2.5 text-[11px] text-emerald-50 hover:bg-emerald-500"
+          }
           onClick={(e) => {
             e.stopPropagation()
-            toast.success(
-              `${reservation.guestName} (${reservation.partySize} guests) seated at ${reservation.table ?? "T12"}`,
-              {
-                action: { label: "Undo", onClick: () => {} },
-                duration: 5000,
-              }
-            )
+            if (isUnassigned) {
+              onAssignTable(reservation.id)
+              return
+            }
+            toast.success(`${reservation.guestName} (${reservation.partySize} guests) seated at ${reservation.table}`, {
+              action: { label: "Undo", onClick: () => {} },
+              duration: 5000,
+            })
           }}
         >
           <Armchair className="mr-1 h-3 w-3" />
-          Seat Now
+          {isUnassigned ? "Assign Table" : "Seat Now"}
         </Button>
 
         <Popover>
@@ -272,6 +281,14 @@ export function UpcomingReservations() {
     router.push(`${pathname}?${next.toString()}`, { scroll: false })
   }
 
+  const openEditForAssignment = (reservationId: string) => {
+    const next = new URLSearchParams(searchParams.toString())
+    next.set("action", "edit")
+    next.set("id", reservationId)
+    next.delete("detail")
+    router.push(`${pathname}?${next.toString()}`, { scroll: false })
+  }
+
   return (
     <div className="glass-surface flex h-full flex-col rounded-xl">
       <div className="flex items-center justify-between border-b border-zinc-800/50 px-4 py-3">
@@ -322,7 +339,13 @@ export function UpcomingReservations() {
                 {isOpen && (
                   <div className="mt-2 space-y-2 pl-1">
                     {group.reservations.map((r, i) => (
-                      <ReservationCard key={r.id} reservation={r} index={i} onOpenDetail={openDetail} />
+                      <ReservationCard
+                        key={r.id}
+                        reservation={r}
+                        index={i}
+                        onOpenDetail={openDetail}
+                        onAssignTable={openEditForAssignment}
+                      />
                     ))}
                   </div>
                 )}
