@@ -87,13 +87,17 @@ export function ListDetailPanel({ reservation, open, onClose }: ListDetailPanelP
             <div className="mt-1 flex items-center gap-2">
               <span className={cn(
                 "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                statusBadge.pillClass,
                 statusBadge.bgClass, statusBadge.textClass
-              )}>
-                <span className={cn("h-1.5 w-1.5 rounded-full", statusBadge.dotClass)} />
+              )} style={{ borderStyle: statusBadge.borderStyle }}>
+                <span
+                  className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", statusBadge.dotClass)}
+                  style={statusBadge.dotColor ? { backgroundColor: statusBadge.dotColor } : undefined}
+                />
                 {statusBadge.label}
               </span>
               <span className="flex items-center gap-1 text-[10px] text-zinc-400">
-                <span className={cn("h-1.5 w-1.5 rounded-full", riskDisplay.dotClass)} />
+                <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", riskDisplay.dotClass)} />
                 {riskDisplay.label} risk
                 {reservation.riskScore && ` (${reservation.riskScore}%)`}
               </span>
@@ -212,7 +216,7 @@ export function ListDetailPanel({ reservation, open, onClose }: ListDetailPanelP
           {/* Action buttons */}
           <div className="border-t border-zinc-800 px-5 py-3">
             <div className="grid grid-cols-2 gap-2">
-              {(reservation.status === "arriving" || reservation.status === "confirmed" || reservation.status === "unconfirmed") && (
+              {(reservation.status === "arriving" || reservation.status === "late" || reservation.status === "confirmed" || reservation.status === "unconfirmed") && (
                 <>
                   <Button size="sm" className="h-8 bg-emerald-600 text-xs text-emerald-50 hover:bg-emerald-500">
                     Seat Now

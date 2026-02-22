@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react"
 import {
   ChevronLeft,
   ChevronRight,
+  Clock,
   MessageSquare,
   MoreHorizontal,
   UtensilsCrossed,
@@ -24,7 +25,8 @@ import {
   getGhostsForTable,
   getMergedForTable,
   getBlockColor,
-  getRiskDot,
+  getPartiallySeatedRatio,
+  getStatusDot,
   getStatusLabel,
   formatTime24h,
 } from "@/lib/timeline-data"
@@ -86,11 +88,20 @@ export function TimelineMobile({
   })
 
   const [currentIndex, setCurrentIndex] = useState(0)
+  const [pressedBlockId, setPressedBlockId] = useState<string | null>(null)
   const touchStart = useRef<number | null>(null)
+  const pressFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     setCurrentIndex((prev) => Math.min(prev, Math.max(filteredTables.length - 1, 0)))
   }, [filteredTables.length])
+  useEffect(() => {
+    return () => {
+      if (pressFeedbackTimerRef.current) {
+        clearTimeout(pressFeedbackTimerRef.current)
+      }
+    }
+  }, [])
 
   const currentTable = filteredTables[currentIndex]
   if (!currentTable) {
@@ -124,6 +135,16 @@ export function TimelineMobile({
 
   const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
   const goNext = () => setCurrentIndex((i) => Math.min(filteredTables.length - 1, i + 1))
+  const triggerPressFeedback = (blockId: string) => {
+    setPressedBlockId(blockId)
+    if (pressFeedbackTimerRef.current) {
+      clearTimeout(pressFeedbackTimerRef.current)
+    }
+    pressFeedbackTimerRef.current = setTimeout(() => {
+      setPressedBlockId((current) => (current === blockId ? null : current))
+      pressFeedbackTimerRef.current = null
+    }, 140)
+  }
 
   // Swipe detection
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -206,7 +227,7 @@ export function TimelineMobile({
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-24 pt-2">
         {/* Merged indicator */}
         {merged && (
-          <div className="rounded-lg border border-dashed border-zinc-700/50 bg-zinc-800/20 px-4 py-3 text-center">
+          <div className="rounded-lg border border-zinc-600/35 bg-zinc-700/20 px-4 py-3 text-center">
             <span className="text-xs text-zinc-500">MERGED WITH {merged.mergedWith}</span>
             <p className="mt-0.5 text-[10px] text-zinc-600">
               {formatTime24h(merged.startTime)} - {formatTime24h(merged.endTime)}
@@ -215,38 +236,57 @@ export function TimelineMobile({
         )}
 
         {tableBlocks.map((block) => {
-          const colors = getBlockColor(block.status)
+          const colors = getBlockColor(block)
+          const dot = getStatusDot(block)
+          const partialRatio = getPartiallySeatedRatio(block)
           const statusLabel = getStatusLabel(block)
-          const isPast = block.status === "completed"
 
           return (
             <button
               key={block.id}
               type="button"
               className={cn(
-                "tl-block w-full rounded-lg border-l-[3px] p-4 text-left backdrop-blur-sm",
-                colors.bg,
-                colors.border,
-                isPast && "opacity-50"
+                "tl-block relative w-full rounded-[8px] p-4 text-left",
+                "transition-[transform,box-shadow] duration-120 hover:scale-[1.05] active:scale-[1.05]",
+                colors.container,
+                colors.withBlur && "backdrop-blur-sm",
+                colors.pulse,
+                pressedBlockId === block.id && "z-10 scale-[1.05]"
               )}
+              style={{ borderStyle: colors.borderStyle }}
+              onPointerDown={() => triggerPressFeedback(block.id)}
               onClick={() => onBlockClick(block)}
             >
+              {partialRatio !== null && (
+                <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[8px]">
+                  <div className="absolute inset-y-0 left-0 bg-emerald-500/15" style={{ width: `${partialRatio}%` }} />
+                  <div className="absolute inset-y-0 right-0 bg-cyan-500/15" style={{ width: `${100 - partialRatio}%` }} />
+                  <div className="absolute inset-y-0 w-px bg-zinc-600/70" style={{ left: `${partialRatio}%` }} />
+                </div>
+              )}
               <div className="flex items-start justify-between">
-                <div className="space-y-1">
+                <div className="relative z-10 space-y-1">
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "text-sm font-semibold",
-                      isPast ? "text-zinc-400 line-through" : "text-foreground"
+                      block.status === "no-show" && "line-through",
+                      colors.text
                     )}>
                       {block.guestName} ({block.partySize})
                     </span>
-                    <span className={cn("h-2 w-2 rounded-full", getRiskDot(block.risk))} />
+                    <span className="relative h-2.5 w-2.5">
+                      <span className={cn("absolute inset-0 rounded-full", dot.className)} style={dot.style} />
+                      {dot.pulseClass && (
+                        <span className={cn("absolute -inset-1.5 rounded-full", dot.pulseClass)} />
+                      )}
+                    </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {formatTime24h(block.startTime)} - {formatTime24h(block.endTime)}
                   </p>
-                  <p className={cn("text-xs", colors.text)}>
-                    {statusLabel}{isPast && " \u2713"}
+                  <p className={cn("flex items-center gap-1 text-xs", colors.statusText)}>
+                    {block.status === "late" && <Clock className="h-3 w-3 shrink-0 text-rose-300" />}
+                    {statusLabel}
                   </p>
                 </div>
 
@@ -324,14 +364,14 @@ export function TimelineMobile({
         {ghosts.map((ghost) => (
           <div
             key={ghost.id}
-            className="tl-ghost-block rounded-lg border border-dashed border-zinc-600/40 bg-zinc-600/10 p-4"
+            className="tl-ghost-block rounded-[8px] border border-dotted border-zinc-500/25 bg-transparent p-4"
           >
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs italic text-zinc-500/55">
               {formatTime24h(ghost.predictedTime)} - open
             </p>
-            <p className="text-sm text-zinc-400">{ghost.label}</p>
+            <p className="text-sm italic text-zinc-500/55">{ghost.label}</p>
             {ghost.conditional && (
-              <p className="text-[10px] text-zinc-600">({ghost.conditional})</p>
+              <p className="text-[10px] italic text-zinc-500/45">({ghost.conditional})</p>
             )}
             <Button
               variant="outline"

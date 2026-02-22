@@ -37,19 +37,21 @@ interface ListMobileCardsProps {
   reservations: ListReservation[]
   groupBy: GroupByOption
   onSearchChange: (query: string) => void
-  activeStatus: StatusTab
+  activeStatuses: ListReservationStatus[]
   onStatusFilter: (status: StatusTab) => void
   onOpenDetail: (reservation: ListReservation) => void
 }
 
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "all", label: "All" },
+  { key: "waitlist", label: "Waitlist" },
   { key: "arriving", label: "Arriving" },
+  { key: "late", label: "Late" },
   { key: "confirmed", label: "Upcoming" },
   { key: "seated", label: "Seated" },
-  { key: "completed", label: "Done" },
+  { key: "completed", label: "Completed" },
   { key: "no-show", label: "No-Show" },
-  { key: "waitlist", label: "Wait" },
+  { key: "cancelled", label: "Cancelled" },
 ]
 
 function SwipeCard({
@@ -105,7 +107,12 @@ function SwipeCard({
       {/* Card */}
       <div
         ref={cardRef}
-        className="relative glass-surface rounded-xl p-3 transition-transform"
+        className={cn(
+          "relative rounded-xl border p-3 backdrop-blur-sm transition-transform",
+          statusBadge.cardClass,
+          statusBadge.pulseClass
+        )}
+        style={{ borderStyle: statusBadge.borderStyle }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -123,7 +130,7 @@ function SwipeCard({
             {reservation.tags.some((t) => t.type === "vip") && <Star className="h-3 w-3 text-amber-400 fill-amber-400" />}
             {reservation.tags.some((t) => t.type === "birthday") && <Cake className="h-3 w-3 text-pink-400" />}
             {reservation.tags.some((t) => t.type === "anniversary") && <Heart className="h-3 w-3 text-rose-400 fill-rose-400" />}
-            <span className="text-sm font-medium text-foreground">{reservation.guestName}</span>
+            <span className={cn("text-sm font-medium text-foreground", statusBadge.nameClass)}>{reservation.guestName}</span>
           </div>
           <span className="text-xs tabular-nums font-mono text-zinc-400">{formatTime12h(reservation.time)}</span>
         </div>
@@ -150,14 +157,18 @@ function SwipeCard({
         <div className="mt-2 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-[10px] text-zinc-400">
-              <span className={cn("h-1.5 w-1.5 rounded-full", riskDisplay.dotClass)} />
+              <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", riskDisplay.dotClass)} />
               {riskDisplay.label} risk
             </span>
             <span className={cn(
               "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+              statusBadge.pillClass,
               statusBadge.bgClass, statusBadge.textClass
-            )}>
-              <span className={cn("h-1.5 w-1.5 rounded-full", statusBadge.dotClass)} />
+            )} style={{ borderStyle: statusBadge.borderStyle }}>
+              <span
+                className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", statusBadge.dotClass)}
+                style={statusBadge.dotColor ? { backgroundColor: statusBadge.dotColor } : undefined}
+              />
               {statusBadge.label}
             </span>
           </div>
@@ -165,7 +176,7 @@ function SwipeCard({
 
         {/* Action buttons */}
         <div className="mt-2.5 flex items-center gap-2 border-t border-zinc-800/50 pt-2.5">
-          {(reservation.status === "arriving" || reservation.status === "confirmed" || reservation.status === "unconfirmed") && (
+          {(reservation.status === "arriving" || reservation.status === "late" || reservation.status === "confirmed" || reservation.status === "unconfirmed") && (
             <>
               <Button size="sm" className="h-7 bg-emerald-600 text-[10px] text-emerald-50 hover:bg-emerald-500 flex-1">
                 Seat Now
@@ -205,11 +216,23 @@ export function ListMobileCards({
   reservations,
   groupBy,
   onSearchChange,
-  activeStatus,
+  activeStatuses,
   onStatusFilter,
   onOpenDetail,
 }: ListMobileCardsProps) {
   const [searchValue, setSearchValue] = useState("")
+  const getStatusCount = useCallback((status: StatusTab): number => {
+    if (status === "all") return reservations.length
+    if (status === "confirmed") {
+      return reservations.filter((r) => r.status === "confirmed" || r.status === "unconfirmed").length
+    }
+    return reservations.filter((r) => r.status === status).length
+  }, [reservations])
+  const isStatusActive = (status: StatusTab): boolean => {
+    if (status === "all") return activeStatuses.length === 0
+    return activeStatuses.includes(status)
+  }
+  const selectedStatusCount = activeStatuses.length
 
   const groups = groupReservations(reservations, groupBy)
 
@@ -248,29 +271,51 @@ export function ListMobileCards({
               <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800">Party Size</DropdownMenuItem>
               <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800">Zone</DropdownMenuItem>
               <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800">Server</DropdownMenuItem>
-              <DropdownMenuItem className="text-xs text-zinc-300 focus:bg-zinc-800">Risk Level</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
-
-        {/* Status pill tabs */}
-        <div className="mt-2 flex items-center gap-1.5 overflow-x-auto scrollbar-none" role="tablist">
-          {STATUS_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              role="tab"
-              aria-selected={activeStatus === tab.key}
-              onClick={() => onStatusFilter(tab.key)}
-              className={cn(
-                "shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-all",
-                activeStatus === tab.key
-                  ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
-                  : "bg-zinc-800/60 text-zinc-400"
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-8 border-zinc-700 bg-zinc-800/60 text-xs text-zinc-300",
+                  selectedStatusCount > 0 && "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
+                )}
+              >
+                Status
+                {selectedStatusCount > 0 && (
+                  <span className="ml-1 rounded-full bg-emerald-500/20 px-1.5 text-[10px] font-bold text-emerald-300">
+                    {selectedStatusCount}
+                  </span>
+                )}
+                <ChevronDown className="ml-1 h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="border-zinc-700 bg-zinc-900">
+              {STATUS_TABS.map((tab) => {
+                const isActive = isStatusActive(tab.key)
+                return (
+                  <DropdownMenuItem
+                    key={tab.key}
+                    onClick={() => onStatusFilter(tab.key)}
+                    className={cn(
+                      "flex items-center justify-between gap-3 text-xs text-zinc-300 focus:bg-zinc-800",
+                      isActive && "text-emerald-300"
+                    )}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                      isActive ? "bg-emerald-500/20 text-emerald-300" : "bg-zinc-700/60 text-zinc-400"
+                    )}>
+                      {getStatusCount(tab.key)}
+                    </span>
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 

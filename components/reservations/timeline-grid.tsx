@@ -24,6 +24,7 @@ interface TimelineGridProps {
   zoneFilter: string
   partySizeFilter: string
   showGhosts: boolean
+  detailOpen?: boolean
   onScrollChange: (scrollLeft: number) => void
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   onBlockClick: (block: TBlock) => void
@@ -38,6 +39,8 @@ const LANE_HEIGHT = 56
 const ZONE_HEADER_HEIGHT = 32
 const TIME_HEADER_HEIGHT = 28
 const SLOT_FEEDBACK_MS = 260
+const DRAG_START_THRESHOLD_PX = 7
+const WIDTH_RESIZE_THRESHOLD_PX = 24
 
 export function TimelineGrid({
   blocks,
@@ -45,6 +48,7 @@ export function TimelineGrid({
   zoneFilter,
   partySizeFilter,
   showGhosts,
+  detailOpen = false,
   onScrollChange,
   scrollContainerRef,
   onBlockClick,
@@ -154,7 +158,13 @@ export function TimelineGrid({
   useEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
-    const syncWidth = () => setViewportWidth(el.clientWidth)
+    const syncWidth = () => {
+      const nextWidth = el.clientWidth
+      setViewportWidth((prev) => {
+        if (prev === 0) return nextWidth
+        return Math.abs(nextWidth - prev) >= WIDTH_RESIZE_THRESHOLD_PX ? nextWidth : prev
+      })
+    }
     syncWidth()
 
     if (typeof ResizeObserver !== "undefined") {
@@ -269,6 +279,12 @@ export function TimelineGrid({
   }, [displayedBlocks])
 
   const startMove = useCallback((event: ReactPointerEvent<HTMLDivElement>, block: TBlock) => {
+    if (block.status === "completed") {
+      event.preventDefault()
+      event.stopPropagation()
+      onBlockClick(block)
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     const rect = event.currentTarget.getBoundingClientRect()
@@ -281,6 +297,7 @@ export function TimelineGrid({
     const dragStartX = event.clientX
     const dragStartY = event.clientY
     let moved = false
+    let dragActivated = false
     let latestInvalid = false
     let latestDraft: Pick<TBlock, "table" | "startTime" | "endTime"> = {
       table: block.table,
@@ -288,19 +305,24 @@ export function TimelineGrid({
       endTime: block.endTime,
     }
 
-    setInteractionBlockId(block.id)
-    setInteractionInvalid(false)
-    setDraftOverrides({
-      [block.id]: {
-        table: block.table,
-        startTime: block.startTime,
-        endTime: block.endTime,
-      },
-    })
-
     const handleMove = (nextEvent: globalThis.PointerEvent) => {
       const distance = Math.hypot(nextEvent.clientX - dragStartX, nextEvent.clientY - dragStartY)
-      if (distance > 3) moved = true
+      if (!moved && distance <= DRAG_START_THRESHOLD_PX) {
+        return
+      }
+      moved = true
+      if (!dragActivated) {
+        dragActivated = true
+        setInteractionBlockId(block.id)
+        setInteractionInvalid(false)
+        setDraftOverrides({
+          [block.id]: {
+            table: block.table,
+            startTime: block.startTime,
+            endTime: block.endTime,
+          },
+        })
+      }
       const x = getTimelineX(nextEvent.clientX) - pointerOffsetPx
       const snappedStart = Math.round((serviceStartMin + (x / subSlotWidth) * clickSlotMinutes - serviceStartMin) / clickSlotMinutes) * clickSlotMinutes + serviceStartMin
       const proposedStart = Math.max(minStart, Math.min(maxStart, snappedStart))
@@ -331,9 +353,11 @@ export function TimelineGrid({
       const nextTable = latestDraft.table
 
       if (!moved) {
-        setDraftOverrides({})
-        setInteractionBlockId(null)
-        setInteractionInvalid(false)
+        if (dragActivated) {
+          setDraftOverrides({})
+          setInteractionBlockId(null)
+          setInteractionInvalid(false)
+        }
         onBlockClick(block)
         return
       }
@@ -346,9 +370,11 @@ export function TimelineGrid({
         })
       }
 
-      setDraftOverrides({})
-      setInteractionBlockId(null)
-      setInteractionInvalid(false)
+      if (dragActivated) {
+        setDraftOverrides({})
+        setInteractionBlockId(null)
+        setInteractionInvalid(false)
+      }
     }
 
     const handleUp = () => {
@@ -356,9 +382,11 @@ export function TimelineGrid({
     }
 
     const handleCancel = () => {
-      setDraftOverrides({})
-      setInteractionBlockId(null)
-      setInteractionInvalid(false)
+      if (dragActivated) {
+        setDraftOverrides({})
+        setInteractionBlockId(null)
+        setInteractionInvalid(false)
+      }
       window.removeEventListener("pointermove", handleMove)
       window.removeEventListener("pointerup", handleUp)
       window.removeEventListener("pointercancel", handleCancel)
@@ -384,6 +412,11 @@ export function TimelineGrid({
   ])
 
   const startResize = useCallback((event: ReactPointerEvent<HTMLDivElement>, block: TBlock) => {
+    if (block.status === "completed") {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -592,7 +625,7 @@ export function TimelineGrid({
                 style={{ top: TIME_HEADER_HEIGHT, left: nowPixel, height: `calc(100% - ${TIME_HEADER_HEIGHT}px)` }}
               >
                 <div className="flex h-full flex-col items-center">
-                  <div className="h-full w-0.5 bg-cyan-400/50 shadow-[0_0_8px_2px_rgba(34,211,238,0.25)]" />
+                  <div className="h-full w-0.5 bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.4)]" />
                 </div>
               </div>
             )}
@@ -744,8 +777,9 @@ export function TimelineGrid({
                             zoom={zoom}
                             slotWidth={slotWidth}
                             onClick={onBlockClick}
-                            onDragStart={startMove}
-                            onResizeStart={startResize}
+                            disableHoverScale={detailOpen}
+                            onDragStart={block.status === "completed" ? undefined : startMove}
+                            onResizeStart={block.status === "completed" ? undefined : startResize}
                             isGhosted={interactionBlockId === block.id}
                             isInvalidDrop={interactionBlockId === block.id && interactionInvalid}
                             axisStart={serviceStart}

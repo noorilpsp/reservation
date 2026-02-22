@@ -15,6 +15,7 @@ import { FormSidePanels } from "./form-side-panels"
 import { FormMobileWizard } from "./form-mobile-wizard"
 import {
   getBlocksForTable,
+  getMergedForTable,
   restaurantConfig as timelineRestaurantConfig,
   tableLanes as timelineTableLanes,
   zones as timelineZones,
@@ -78,11 +79,18 @@ const ZONE_LABELS: Record<string, string> = {
 }
 
 type TimeFitSnapshot = {
-  tone: "open" | "busy" | "tight" | "full" | "closed"
+  tone: "open" | "busy" | "tight" | "short" | "full" | "closed"
   label: string
   available: number
   total: number
   ratio: number
+  maxDurationMinutes?: number
+  shortCount?: number
+}
+
+type BlockingWindow = {
+  startTime: string
+  endTime: string
 }
 
 function toMinutes(timeValue: string): number {
@@ -105,6 +113,8 @@ function toMinutes(timeValue: string): number {
 
   const h = Number.parseInt(match24[1], 10)
   const m = Number.parseInt(match24[2], 10)
+  // Support service-period boundaries like "24:00" (end of day).
+  if (h === 24 && m === 0) return 24 * 60
   if (h < 0 || h > 23 || m < 0 || m > 59) return Number.NaN
   return h * 60 + m
 }
@@ -125,6 +135,23 @@ function normalizeBlockWindow(blockStart: number, blockEnd: number, anchor: numb
     end += 24 * 60
   }
   return { start, end }
+}
+
+function getBlockingWindowsForTable(tableId: string): BlockingWindow[] {
+  const reservationWindows = getBlocksForTable(tableId)
+    .filter((block) => block.status !== "unconfirmed")
+    .map((block) => ({
+      startTime: block.startTime,
+      endTime: block.endTime,
+    }))
+  const mergedWindow = getMergedForTable(tableId)
+  if (mergedWindow) {
+    reservationWindows.push({
+      startTime: mergedWindow.startTime,
+      endTime: mergedWindow.endTime,
+    })
+  }
+  return reservationWindows
 }
 
 function normalizeTime24(timeValue: string): string {
@@ -186,6 +213,24 @@ function isIsoToday(isoDate?: string): boolean {
   )
 }
 
+function isIsoInPast(isoDate?: string): boolean {
+  if (!isoDate) return false
+  const parsed = new Date(`${isoDate}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return false
+  parsed.setHours(0, 0, 0, 0)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return parsed < today
+}
+
+function getTodayIsoDate(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, "0")
+  const d = String(now.getDate()).padStart(2, "0")
+  return `${y}-${m}-${d}`
+}
+
 function getOpenTimes(baseTime: string, servicePeriodId?: string, selectedDate?: string): string[] {
   const { start, end } = getServiceBoundsForTime(baseTime, servicePeriodId)
   let effectiveStart = start
@@ -224,20 +269,93 @@ function getOpenTimes(baseTime: string, servicePeriodId?: string, selectedDate?:
   return times
 }
 
-function getAvailableTimesForTable(tableId: string | null, baseTime: string, servicePeriodId?: string, selectedDate?: string): string[] {
+function getContinuousWindowMetaForTable(
+  tableId: string,
+  startTime: string,
+  servicePeriodId?: string
+): {
+  availableMinutes: number
+  boundaryKind: "none" | "service-end" | "next-reservation"
+  boundaryTime?: string
+  tableLabel: string
+} {
+  const selectedStart = toMinutes(startTime)
+  const tableLabel = timelineTableLanes.find((lane) => lane.id === tableId)?.label ?? tableId
+  if (!Number.isFinite(selectedStart)) {
+    return {
+      availableMinutes: 0,
+      boundaryKind: "none",
+      tableLabel,
+    }
+  }
+
+  const normalize = (value: number): number => {
+    let normalized = value
+    while (normalized <= selectedStart) normalized += 24 * 60
+    return normalized
+  }
+
+  const blockingWindows = getBlockingWindowsForTable(tableId)
+
+  const hasOverlapAtStart = blockingWindows.some((window) => {
+    const rawStart = toMinutes(window.startTime)
+    const rawEnd = toMinutes(window.endTime)
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return false
+    const { start, end } = normalizeBlockWindow(rawStart, rawEnd, selectedStart)
+    return selectedStart >= start && selectedStart < end
+  })
+  if (hasOverlapAtStart) {
+    return {
+      availableMinutes: 0,
+      boundaryKind: "next-reservation",
+      tableLabel,
+    }
+  }
+
+  let serviceEnd = getServiceBoundsForTime(startTime, servicePeriodId).end
+  while (serviceEnd <= selectedStart) serviceEnd += 24 * 60
+
+  const nextReservationStart = blockingWindows
+    .map((window) => {
+      const rawStart = toMinutes(window.startTime)
+      if (!Number.isFinite(rawStart)) return undefined
+      return normalize(rawStart)
+    })
+    .filter((start): start is number => typeof start === "number")
+    .filter((start) => start > selectedStart)
+    .sort((a, b) => a - b)[0]
+
+  const boundaryCandidates: Array<{ minute: number; kind: "service-end" | "next-reservation" }> = [
+    { minute: serviceEnd, kind: "service-end" },
+  ]
+  if (typeof nextReservationStart === "number") {
+    boundaryCandidates.push({ minute: nextReservationStart, kind: "next-reservation" })
+  }
+
+  const earliestBoundary = boundaryCandidates.sort((a, b) => a.minute - b.minute)[0]
+  const availableMinutes = Math.max(0, earliestBoundary.minute - selectedStart)
+
+  return {
+    availableMinutes,
+    boundaryKind: earliestBoundary.kind,
+    boundaryTime: toTime24(earliestBoundary.minute),
+    tableLabel,
+  }
+}
+
+function getAvailableTimesForTable(
+  tableId: string | null,
+  baseTime: string,
+  duration: number,
+  servicePeriodId?: string,
+  selectedDate?: string
+): string[] {
   const openTimes = getOpenTimes(baseTime, servicePeriodId, selectedDate)
   if (!tableId) return openTimes
 
-  const blocks = getBlocksForTable(tableId)
   return openTimes.filter((time) => {
-    const t = toMinutes(time)
-    if (!Number.isFinite(t)) return false
-    return !blocks.some((block) => {
-      const start = toMinutes(block.startTime)
-      const end = toMinutes(block.endTime)
-      if (!Number.isFinite(start) || !Number.isFinite(end)) return false
-      return t >= start && t < end
-    })
+    const window = getContinuousWindowMetaForTable(tableId, time, servicePeriodId)
+    return window.availableMinutes >= duration
   })
 }
 
@@ -261,9 +379,9 @@ function resolveDurationConstraints(time: string, tableId: string | null, partyS
   const normalize = (min: number) => (min < selectedMin ? min + 24 * 60 : min)
   const selectedNormalized = normalize(selectedMin)
 
-  const nextReservationStart = getBlocksForTable(tableId)
-    .map((block) => {
-      const start = toMinutes(block.startTime)
+  const nextReservationStart = getBlockingWindowsForTable(tableId)
+    .map((window) => {
+      const start = toMinutes(window.startTime)
       return Number.isFinite(start) ? normalize(start) : undefined
     })
     .filter((start): start is number => typeof start === "number")
@@ -295,9 +413,9 @@ function isTableAvailableForWindow(tableId: string, startTime: string, duration:
   if (!Number.isFinite(selectedStart)) return false
   const selectedEnd = selectedStart + duration
 
-  return !getBlocksForTable(tableId).some((block) => {
-    const rawStart = toMinutes(block.startTime)
-    const rawEnd = toMinutes(block.endTime)
+  return !getBlockingWindowsForTable(tableId).some((window) => {
+    const rawStart = toMinutes(window.startTime)
+    const rawEnd = toMinutes(window.endTime)
     if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return false
     const { start, end } = normalizeBlockWindow(rawStart, rawEnd, selectedStart)
     return selectedStart < end && selectedEnd > start
@@ -309,7 +427,8 @@ function buildTimeFitMap(
   partySize: number,
   zonePreference: string,
   duration: number,
-  assignedTable: string | null
+  assignedTable: string | null,
+  servicePeriodId?: string
 ): Record<string, TimeFitSnapshot> {
   const eligibleTables = assignedTable
     ? timelineTableLanes.filter((lane) => lane.id === assignedTable && lane.seats >= partySize)
@@ -331,21 +450,36 @@ function buildTimeFitMap(
       return acc
     }
 
-    const available = eligibleTables.filter((lane) => isTableAvailableForWindow(lane.id, time, duration)).length
+    const windows = eligibleTables.map((lane) => getContinuousWindowMetaForTable(lane.id, time, servicePeriodId))
+    const available = windows.filter((window) => window.availableMinutes >= duration).length
+    const shortWindows = windows.filter((window) => window.availableMinutes >= 15 && window.availableMinutes < duration)
+    const shortCount = shortWindows.length
+    const maxShortWindow = shortWindows.sort((a, b) => b.availableMinutes - a.availableMinutes)[0]
+    const maxDurationMinutes = maxShortWindow?.availableMinutes ?? 0
     const ratio = available / total
     const tone: TimeFitSnapshot["tone"] = (
-      available <= 0 ? "full"
-      : ratio <= 0.33 ? "tight"
-      : ratio <= 0.66 ? "busy"
-      : "open"
+      available > 0
+        ? ratio <= 0.33 ? "tight"
+          : ratio <= 0.66 ? "busy"
+          : "open"
+        : shortCount > 0
+          ? "short"
+          : "full"
     )
 
     acc[time] = {
       tone,
-      label: `${available}/${total} fit`,
+      label:
+        available > 0
+          ? `${available}/${total} fit`
+          : shortCount > 0
+            ? `${shortCount}/${total} fit`
+            : "unavailable",
       available,
       total,
       ratio,
+      maxDurationMinutes,
+      shortCount,
     }
     return acc
   }, {})
@@ -450,16 +584,16 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
     [form.time, form.assignedTable, form.partySize, servicePeriodId]
   )
   const availableTimes = useMemo(
-    () => getAvailableTimesForTable(form.assignedTable, form.time, servicePeriodId, form.date),
-    [form.assignedTable, form.date, form.time, servicePeriodId]
+    () => getAvailableTimesForTable(form.assignedTable, form.time, form.duration, servicePeriodId, form.date),
+    [form.assignedTable, form.date, form.duration, form.time, servicePeriodId]
   )
   const openTimes = useMemo(
     () => getOpenTimes(form.time, servicePeriodId, form.date),
     [form.date, form.time, servicePeriodId]
   )
   const timeFitByTime = useMemo(
-    () => buildTimeFitMap(openTimes, form.partySize, form.zonePreference, form.duration, form.assignedTable),
-    [form.assignedTable, form.duration, form.partySize, form.zonePreference, openTimes]
+    () => buildTimeFitMap(openTimes, form.partySize, form.zonePreference, form.duration, form.assignedTable, servicePeriodId),
+    [form.assignedTable, form.duration, form.partySize, form.zonePreference, openTimes, servicePeriodId]
   )
   const fitContextLabel = useMemo(
     () => `${ZONE_LABELS[form.zonePreference] ?? "All zones"} · ${form.partySize}p`,
@@ -485,6 +619,22 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
   const updateForm = useCallback((partial: Partial<ReservationFormData>) => {
     setForm((prev) => ({ ...prev, ...partial }))
   }, [])
+
+  useEffect(() => {
+    if (mode !== "create") return
+    if (!isIsoInPast(form.date)) return
+
+    const todayIso = getTodayIsoDate()
+    const todayTimes = getOpenTimes(form.time, servicePeriodId, todayIso)
+    const fallbackTime = todayTimes[0] ?? form.time
+    const nextConstraints = resolveDurationConstraints(fallbackTime, form.assignedTable, form.partySize, servicePeriodId)
+
+    updateForm({
+      date: todayIso,
+      time: fallbackTime,
+      duration: clampDuration(nextConstraints.durationDefault, nextConstraints.durationMax),
+    })
+  }, [clampDuration, form.assignedTable, form.date, form.partySize, form.time, mode, servicePeriodId, updateForm])
 
   useEffect(() => {
     if (availableTimes.length === 0) return
@@ -571,9 +721,9 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
       .filter((lane) => lane.seats >= form.partySize)
       .filter((lane) => form.zonePreference === "any" || lane.zone === form.zonePreference)
       .map((lane) => {
-        const overlaps = getBlocksForTable(lane.id).filter((block) => {
-          const rawStart = toMinutes(block.startTime)
-          const rawEnd = toMinutes(block.endTime)
+        const overlaps = getBlockingWindowsForTable(lane.id).filter((window) => {
+          const rawStart = toMinutes(window.startTime)
+          const rawEnd = toMinutes(window.endTime)
           if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return false
           const { start, end } = normalizeBlockWindow(rawStart, rawEnd, selectedStart)
           return selectedStart < end && selectedEnd > start
@@ -581,9 +731,9 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
 
         const available = overlaps.length === 0
         const overlapEnds = overlaps
-          .map((block) => {
-            const rawStart = toMinutes(block.startTime)
-            const rawEnd = toMinutes(block.endTime)
+          .map((window) => {
+            const rawStart = toMinutes(window.startTime)
+            const rawEnd = toMinutes(window.endTime)
             if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return undefined
             return normalizeBlockWindow(rawStart, rawEnd, selectedStart).end
           })

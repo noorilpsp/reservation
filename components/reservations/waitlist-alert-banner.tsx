@@ -39,7 +39,7 @@ export function WaitlistAlertBanner({
 
   return (
     <div
-      className="wl-alert-banner relative mx-4 mt-3 flex flex-col gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between lg:mx-6"
+      className="wl-alert-banner relative mx-4 mt-3 flex flex-col gap-2 rounded-xl border border-emerald-500/35 bg-[linear-gradient(135deg,rgba(16,185,129,0.16),rgba(16,185,129,0.06))] px-4 py-3 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between lg:mx-6"
       role="alert"
       aria-live="assertive"
     >

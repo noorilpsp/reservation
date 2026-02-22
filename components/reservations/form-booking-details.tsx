@@ -25,7 +25,7 @@ interface FormBookingDetailsProps {
   tableSeatLabel?: string
   zonePreference: string
   fitContextLabel?: string
-  timeFitByTime?: Record<string, { tone: "open" | "busy" | "tight" | "full" | "closed"; label: string; available: number; total: number; ratio: number }>
+  timeFitByTime?: Record<string, { tone: "open" | "busy" | "tight" | "short" | "full" | "closed"; label: string; available: number; total: number; ratio: number; maxDurationMinutes?: number }>
   onDateChange: (date: string) => void
   onTimeChange: (time: string) => void
   onPartySizeChange: (size: number) => void
@@ -61,6 +61,7 @@ function toMinutes(timeValue: string): number {
   if (!match24) return Number.NaN
   const h = Number.parseInt(match24[1], 10)
   const m = Number.parseInt(match24[2], 10)
+  if (h === 24 && m === 0) return 24 * 60
   if (h < 0 || h > 23 || m < 0 || m > 59) return Number.NaN
   return h * 60 + m
 }
@@ -108,11 +109,18 @@ function getPressureTone(time24: string): {
   }
 }
 
-function getFitTone(snapshot: { tone: "open" | "busy" | "tight" | "full" | "closed"; label: string }): {
+function getFitTone(snapshot: { tone: "open" | "busy" | "tight" | "short" | "full" | "closed"; label: string }): {
   itemClass: string
   dotClass: string
   pressureLabel: string | null
 } {
+  if (snapshot.tone === "short") {
+    return {
+      itemClass: "text-violet-300",
+      dotClass: "bg-violet-400",
+      pressureLabel: snapshot.label,
+    }
+  }
   if (snapshot.tone === "full" || snapshot.tone === "closed") {
     return {
       itemClass: "text-zinc-400",
@@ -162,6 +170,18 @@ export function FormBookingDetails({
 }: FormBookingDetailsProps) {
   const [calOpen, setCalOpen] = useState(false)
   const normalizedTime = normalizeTime24(time)
+  const todayStart = (() => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    return now
+  })()
+  const selectedDateStart = (() => {
+    const parsed = new Date(`${date}T00:00:00`)
+    if (Number.isNaN(parsed.getTime())) return null
+    parsed.setHours(0, 0, 0, 0)
+    return parsed
+  })()
+  const isPastDate = selectedDateStart !== null && selectedDateStart < todayStart
   const isToday = (() => {
     const parsed = new Date(`${date}T00:00:00`)
     if (Number.isNaN(parsed.getTime())) return false
@@ -182,6 +202,7 @@ export function FormBookingDetails({
   const capacity = getCapacityAtTime(normalizedTime)
   const availableSet = new Set(availableTimes.map(normalizeTime24))
   const renderedTimeSlots = (() => {
+    if (isPastDate) return []
     const base = (allTimes.length > 0 ? allTimes : availableTimes).map(normalizeTime24)
     const deduped = [...new Set(base)]
       .filter(Boolean)
@@ -199,8 +220,9 @@ export function FormBookingDetails({
       return aMin - bMin
     })
   })()
+  const timeSelectDisabled = isPastDate || renderedTimeSlots.length === 0
   const durationOptions = (() => {
-    const baseOptions = [60, 75, 90, 105, 120, 135, 150, 180]
+    const baseOptions = [15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180]
     if (!durationMax) return baseOptions
     const snappedMax = Math.max(15, Math.floor(durationMax / 15) * 15)
     const stepped = Array.from({ length: Math.floor(snappedMax / 15) }, (_, i) => (i + 1) * 15)
@@ -426,8 +448,16 @@ export function FormBookingDetails({
               <Calendar
                 mode="single"
                 selected={dateObj}
+                disabled={(candidateDate) => {
+                  const normalized = new Date(candidateDate)
+                  normalized.setHours(0, 0, 0, 0)
+                  return normalized < todayStart
+                }}
                 onSelect={(d) => {
                   if (d) {
+                    const normalized = new Date(d)
+                    normalized.setHours(0, 0, 0, 0)
+                    if (normalized < todayStart) return
                     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
                     onDateChange(iso)
                   }
@@ -443,20 +473,23 @@ export function FormBookingDetails({
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
             Time <span className="text-red-400">*</span>
           </label>
-          <Select value={normalizedTime} onValueChange={onTimeChange}>
-            <SelectTrigger className="bg-secondary/50 border-border/60">
+          <Select value={timeSelectDisabled ? undefined : normalizedTime} onValueChange={onTimeChange}>
+            <SelectTrigger
+              className="bg-secondary/50 border-border/60"
+              disabled={timeSelectDisabled}
+            >
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
-                <SelectValue />
+                <SelectValue placeholder={isPastDate ? "Past date (no times)" : "No times available"} />
               </div>
             </SelectTrigger>
             <SelectContent className="max-h-60">
               {renderedTimeSlots.map((slotTime) => {
                 const slotFit = timeFitByTime[slotTime]
-                const isUnavailable = (
-                  (!availableSet.has(slotTime) && slotTime !== normalizedTime)
-                  || ((slotFit?.available ?? 1) <= 0 && slotTime !== normalizedTime)
-                )
+                const isFullFit = availableSet.has(slotTime) || slotTime === normalizedTime
+                const isShortFit = slotFit?.tone === "short" && slotTime !== normalizedTime
+                const isUnavailable = !isFullFit && !isShortFit
+                const isDisabled = isUnavailable || isShortFit
                 const slotMinutes = toMinutes(slotTime)
                 const startedAgoMinutes = (
                   nowMinutes !== null
@@ -473,6 +506,7 @@ export function FormBookingDetails({
                       pressureLabel: null,
                     }
                   : (() => {
+                      if (isShortFit && slotFit) return getFitTone(slotFit)
                       if (slotFit) return getFitTone(slotFit)
                       const base = getPressureTone(slotTime)
                       if (base.pressureLabel) return base
@@ -487,8 +521,14 @@ export function FormBookingDetails({
                 <SelectItem
                   key={slotTime}
                   value={slotTime}
-                  disabled={isUnavailable}
-                  className={isUnavailable ? "text-muted-foreground data-[disabled]:opacity-50" : tone.itemClass}
+                  disabled={isDisabled}
+                  className={
+                    isUnavailable
+                      ? "text-muted-foreground data-[disabled]:opacity-50"
+                      : isShortFit
+                        ? `${tone.itemClass} data-[disabled]:opacity-90`
+                        : tone.itemClass
+                  }
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span
@@ -499,6 +539,10 @@ export function FormBookingDetails({
                     <span>{formatTimeLabel(slotTime)}</span>
                     {isUnavailable ? (
                       <span className="ml-1 text-[10px] text-muted-foreground">(unavailable)</span>
+                    ) : isShortFit ? (
+                      <span className="ml-1 text-[10px] text-violet-300/90">
+                        ({slotFit?.label ?? "fit"}{typeof slotFit?.maxDurationMinutes === "number" ? ` · ${slotFit.maxDurationMinutes}m max` : ""})
+                      </span>
                     ) : startedAgoMinutes !== null ? (
                       <span className="ml-1 text-[10px] text-muted-foreground">
                         (started {startedAgoMinutes}m ago)
@@ -512,6 +556,11 @@ export function FormBookingDetails({
               })}
             </SelectContent>
           </Select>
+          {isPastDate && (
+            <p className="mt-1.5 text-[10px] text-amber-300/90">
+              Past dates cannot be booked.
+            </p>
+          )}
           {(capacity || selectedFit) && (
             <div className="mt-1.5 grid grid-cols-1 gap-1 sm:grid-cols-2 sm:gap-2">
               {capacity && (
@@ -546,13 +595,24 @@ export function FormBookingDetails({
                           ? "bg-amber-500"
                           : selectedFit.tone === "tight"
                           ? "bg-red-500"
+                          : selectedFit.tone === "short"
+                          ? "bg-violet-500"
                           : "bg-zinc-500"
                       }`}
-                      style={{ width: `${Math.max(5, Math.round(selectedFit.ratio * 100))}%` }}
+                      style={{
+                        width: `${
+                          selectedFit.tone === "short" && typeof selectedFit.maxDurationMinutes === "number" && duration > 0
+                            ? Math.max(5, Math.round((selectedFit.maxDurationMinutes / duration) * 100))
+                            : Math.max(5, Math.round(selectedFit.ratio * 100))
+                        }%`,
+                      }}
                     />
                   </div>
                   <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {selectedFit.available}/{selectedFit.total}
+                    {selectedFit.tone === "short"
+                      ? selectedFit.label
+                      : `${selectedFit.available}/${selectedFit.total}`
+                    }
                   </span>
                 </div>
               )}

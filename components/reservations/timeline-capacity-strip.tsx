@@ -112,7 +112,7 @@ export function TimelineCapacityStrip({
                     <span className="rounded bg-cyan-500 px-1.5 py-0.5 text-[9px] font-bold text-zinc-950 shadow-lg shadow-cyan-500/30">
                       NOW {NOW_LABEL}
                     </span>
-                    <div className="h-full w-0.5 bg-cyan-400/60" />
+                    <div className="h-full w-0.5 bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.4)]" />
                   </div>
                 </div>
               )}

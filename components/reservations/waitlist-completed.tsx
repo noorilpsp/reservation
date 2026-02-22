@@ -9,7 +9,7 @@ export function WaitlistCompleted() {
   const [showRemoved, setShowRemoved] = useState(false)
 
   return (
-    <div className="flex flex-col gap-2 px-4 pb-6 lg:px-0">
+    <div className="mt-1 flex flex-col gap-2 rounded-xl border border-zinc-800/50 bg-zinc-900/55 p-2.5 backdrop-blur-sm">
       {/* Completed */}
       <button
         onClick={() => setShowCompleted(!showCompleted)}
@@ -20,11 +20,11 @@ export function WaitlistCompleted() {
         Completed Today ({completedEntries.length} parties)
       </button>
       {showCompleted && (
-        <div className="wl-expand-in flex flex-col gap-0.5 pl-2">
+        <div className="wl-expand-in flex flex-col gap-1 pl-2">
           {completedEntries.map((e) => (
             <div
               key={e.id}
-              className="flex items-center justify-between rounded-md px-3 py-1.5 text-xs text-zinc-500"
+              className="flex items-center justify-between rounded-md border border-zinc-800/70 bg-zinc-800/30 px-3 py-1.5 text-xs text-zinc-500"
             >
               <div className="flex items-center gap-2">
                 <span className="text-zinc-600">{e.joinedTime}</span>
@@ -53,11 +53,11 @@ export function WaitlistCompleted() {
         Removed ({removedEntries.length} parties)
       </button>
       {showRemoved && (
-        <div className="wl-expand-in flex flex-col gap-0.5 pl-2">
+        <div className="wl-expand-in flex flex-col gap-1 pl-2">
           {removedEntries.map((e) => (
             <div
               key={e.id}
-              className="flex items-center justify-between rounded-md px-3 py-1.5 text-xs text-zinc-500"
+              className="flex items-center justify-between rounded-md border border-zinc-800/70 bg-zinc-800/30 px-3 py-1.5 text-xs text-zinc-500"
             >
               <div className="flex items-center gap-2">
                 <XCircle className="h-3 w-3 text-rose-500/60" />

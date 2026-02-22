@@ -35,31 +35,36 @@ export function WaitlistMatchingPanel() {
   return (
     <div className="flex flex-col gap-4">
       {/* Table Availability Forecast */}
-      <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/80 p-4 backdrop-blur-sm">
-        <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-400">
-          Table Availability Forecast
-        </h3>
+      <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/80 p-4 backdrop-blur-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+            Table Availability Forecast
+          </h3>
+          <Badge variant="outline" className="border-cyan-500/30 bg-cyan-500/10 text-[10px] text-cyan-300">
+            AI Routing
+          </Badge>
+        </div>
 
         {/* Available Now */}
         {nowTables.length > 0 && (
           <div className="mb-3">
             <div className="mb-1.5 flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-emerald-500 wl-match-pulse" />
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">
-                Available Now ({nowTables.length})
-              </span>
-            </div>
-            <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
+                  Available Now ({nowTables.length})
+                </span>
+              </div>
+            <div className="flex flex-col gap-2">
               {nowTables.map((t) => {
                 const match = bestMatchFor(t.id, t.seats)
                 return (
                   <div
                     key={t.id}
-                    className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2"
+                    className="rounded-lg border border-emerald-500/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(16,185,129,0.04))] px-3 py-2 shadow-[0_0_14px_rgba(16,185,129,0.1)]"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-emerald-300">{t.id}</span>
+                        <span className="text-sm font-bold tracking-wide text-emerald-200">{t.id}</span>
                         <Badge variant="outline" className="border-zinc-700 text-[10px] text-zinc-400">
                           {t.seats}-top
                         </Badge>
@@ -68,9 +73,9 @@ export function WaitlistMatchingPanel() {
                       </div>
                     </div>
                     {match && (
-                      <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-500">
+                      <div className="mt-1 flex items-center gap-1 text-[10px] text-zinc-400">
                         <ArrowRight className="h-2.5 w-2.5" />
-                        Best for: <span className="text-emerald-400">{match}</span>
+                        Best fit: <span className="text-emerald-300">{match}</span>
                       </div>
                     )}
                   </div>
@@ -85,15 +90,16 @@ export function WaitlistMatchingPanel() {
           <div className="mb-3">
             <div className="mb-1.5 flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-amber-500" />
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-300">
                 Turning Soon ({turningTables.length})
               </span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               {turningTables.map((t) => (
-                <div key={t.id} className="flex items-center justify-between px-1 py-1 text-xs">
+                <div key={t.id} className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-2 py-1.5 text-xs">
+                  <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-zinc-300">{t.id}</span>
+                    <span className="font-semibold text-zinc-200">{t.id}</span>
                     <Badge variant="outline" className="border-zinc-800 text-[10px] text-zinc-500">
                       {t.seats}-top
                     </Badge>
@@ -104,6 +110,7 @@ export function WaitlistMatchingPanel() {
                     {t.currentParty && (
                       <span className="text-zinc-600">({t.currentParty} &mdash; {t.courseStage?.toLowerCase()})</span>
                     )}
+                  </div>
                   </div>
                 </div>
               ))}
@@ -120,9 +127,9 @@ export function WaitlistMatchingPanel() {
                 Merge Options
               </span>
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               {mergeOptions.map((m, i) => (
-                <div key={i} className="flex items-center justify-between px-1 py-1 text-xs text-zinc-500">
+                <div key={i} className="flex items-center justify-between rounded-lg border border-zinc-800/60 bg-zinc-800/25 px-2 py-1.5 text-xs text-zinc-500">
                   <span>{m.tables.join("+")} ({m.combinedSeats}-top)</span>
                   <span>available {m.estTime}{m.reason ? ` (${m.reason})` : ""}</span>
                 </div>
@@ -133,13 +140,13 @@ export function WaitlistMatchingPanel() {
       </div>
 
       {/* Quote Accuracy Tracker */}
-      <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/80 p-4 backdrop-blur-sm">
+      <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/80 p-4 backdrop-blur-sm">
         <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-400">
           Quote Accuracy Tonight
         </h3>
 
         {/* Accuracy bar */}
-        <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div className="mb-2 h-2 w-full overflow-hidden rounded-full border border-zinc-800 bg-zinc-900">
           <div
             className={`h-full rounded-full transition-all duration-1000 ${
               quoteAccuracy.accuracyPct > 85
@@ -151,7 +158,7 @@ export function WaitlistMatchingPanel() {
             style={{ width: `${quoteAccuracy.accuracyPct}%` }}
           />
         </div>
-        <div className="mb-3 text-right text-xs font-bold text-emerald-400">
+        <div className="mb-3 text-right text-xs font-bold text-emerald-300">
           {quoteAccuracy.accuracyPct}%
         </div>
 
@@ -173,7 +180,7 @@ export function WaitlistMatchingPanel() {
         </div>
 
         {/* AI Tip */}
-        <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+        <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2">
           <div className="flex items-start gap-2 text-xs">
             <Lightbulb className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-400" />
             <div>

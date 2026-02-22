@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import {
   type TimelineBlock,
   getBlockColor,
-  getRiskDot,
+  getStatusDot,
   getStatusLabel,
   formatTime24h,
 } from "@/lib/timeline-data"
@@ -36,21 +36,22 @@ interface TimelineDetailPanelProps {
 export function TimelineDetailPanel({ block, open, onClose }: TimelineDetailPanelProps) {
   if (!block) return null
 
-  const colors = getBlockColor(block.status)
+  const colors = getBlockColor(block)
+  const dot = getStatusDot(block)
   const statusLabel = getStatusLabel(block)
 
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose() }}>
       <SheetContent
         side="right"
-        className="w-[360px] border-zinc-800 bg-zinc-950/95 backdrop-blur-xl p-0 sm:w-[400px]"
+        className="w-[360px] border-zinc-800 bg-zinc-950/95 backdrop-blur-xl p-0 sm:w-[400px] data-[state=open]:duration-120 data-[state=closed]:duration-90"
       >
         <SheetHeader className="border-b border-zinc-800/50 px-6 py-4">
           <div className="flex items-start justify-between">
             <div className="space-y-1">
               <SheetTitle className="flex items-center gap-2 text-foreground">
                 {block.guestName}
-                <span className={cn("h-2.5 w-2.5 rounded-full", getRiskDot(block.risk))} />
+                <span className={cn("inline-block h-2.5 w-2.5 shrink-0 rounded-full", dot.className)} style={dot.style} />
               </SheetTitle>
               <p className="text-sm text-muted-foreground">
                 Party of {block.partySize}
@@ -62,7 +63,7 @@ export function TimelineDetailPanel({ block, open, onClose }: TimelineDetailPane
         <div className="space-y-5 overflow-y-auto px-6 py-5" style={{ maxHeight: "calc(100dvh - 80px)" }}>
           {/* Status badge */}
           <div className="flex items-center gap-2">
-            <Badge className={cn("text-xs", colors.bg, colors.text, "border-none")}>
+            <Badge className={cn("border border-zinc-700 bg-zinc-900/80 text-xs", colors.statusText)}>
               {statusLabel}
             </Badge>
             {block.risk === "high" && block.riskScore && (

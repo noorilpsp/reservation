@@ -6,6 +6,7 @@ import { HeroStats } from "@/components/reservations/hero-stats"
 import { TimelineCapacityStrip } from "@/components/reservations/timeline-capacity-strip"
 import { UpcomingReservations } from "@/components/reservations/upcoming-reservations"
 import { WaitlistPanel } from "@/components/reservations/waitlist-panel"
+import { WaitlistSignals } from "@/components/reservations/waitlist-signals"
 import { TurnTracker } from "@/components/reservations/turn-tracker"
 import { PaceStrip } from "@/components/reservations/pace-strip"
 import {
@@ -37,7 +38,10 @@ function ReservationsDashboardPageContent() {
         {/* Section 1: Hero Stats */}
         <HeroStats stats={stats} />
 
-        {/* Section 2: Capacity Forecast (Timeline strip style) */}
+        {/* Section 2: Waitlist Signals */}
+        <WaitlistSignals />
+
+        {/* Section 3: Capacity Forecast (Timeline strip style) */}
         <section aria-label="Capacity forecast" className="px-4 lg:px-6">
           <TimelineCapacityStrip
             zoom="30min"
@@ -46,7 +50,7 @@ function ReservationsDashboardPageContent() {
           />
         </section>
 
-        {/* Section 3: Two-Column Layout */}
+        {/* Section 4: Two-Column Layout */}
         <section
           aria-label="Reservations and floor status"
           className="grid gap-5 px-4 lg:grid-cols-[1fr_400px] lg:px-6"
@@ -63,7 +67,7 @@ function ReservationsDashboardPageContent() {
           </div>
         </section>
 
-        {/* Section 4: Pace Strip */}
+        {/* Section 5: Pace Strip */}
         <PaceStrip />
       </main>
     </div>

@@ -22,6 +22,7 @@ import {
   tableLanes as timelineTableLanes,
   zones as timelineZones,
   getBlocksForTable,
+  getMergedForTable,
 } from "@/lib/timeline-data"
 
 interface FormTableAssignmentProps {
@@ -49,6 +50,11 @@ interface ManualTableOption {
   score: number
 }
 
+type BlockingWindow = {
+  startTime: string
+  endTime: string
+}
+
 function toMinutes(timeValue: string): number {
   const raw = timeValue.trim()
   if (!raw) return Number.NaN
@@ -69,6 +75,7 @@ function toMinutes(timeValue: string): number {
 
   const h = Number.parseInt(match24[1], 10)
   const m = Number.parseInt(match24[2], 10)
+  if (h === 24 && m === 0) return 24 * 60
   if (h < 0 || h > 23 || m < 0 || m > 59) return Number.NaN
   return h * 60 + m
 }
@@ -89,6 +96,23 @@ function normalizeBlockWindow(blockStart: number, blockEnd: number, anchor: numb
     end += 24 * 60
   }
   return { start, end }
+}
+
+function getBlockingWindowsForTable(tableId: string): BlockingWindow[] {
+  const reservationWindows = getBlocksForTable(tableId)
+    .filter((block) => block.status !== "unconfirmed")
+    .map((block) => ({
+      startTime: block.startTime,
+      endTime: block.endTime,
+    }))
+  const mergedWindow = getMergedForTable(tableId)
+  if (mergedWindow) {
+    reservationWindows.push({
+      startTime: mergedWindow.startTime,
+      endTime: mergedWindow.endTime,
+    })
+  }
+  return reservationWindows
 }
 
 function formatOpeningDelta(minutes: number): string {
@@ -120,9 +144,9 @@ export function FormTableAssignment({
         timelineZones.find((zone) => zone.id === lane.zone)?.name
         ?? lane.zone
 
-      const overlapping = getBlocksForTable(lane.id).filter((block) => {
-        const rawStart = toMinutes(block.startTime)
-        const rawEnd = toMinutes(block.endTime)
+      const overlapping = getBlockingWindowsForTable(lane.id).filter((window) => {
+        const rawStart = toMinutes(window.startTime)
+        const rawEnd = toMinutes(window.endTime)
         if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return false
         const { start, end } = normalizeBlockWindow(rawStart, rawEnd, slotStart)
         return slotStart < end && slotEnd > start
@@ -130,9 +154,9 @@ export function FormTableAssignment({
 
       const available = overlapping.length === 0
       const overlapEnds = overlapping
-        .map((block) => {
-          const rawStart = toMinutes(block.startTime)
-          const rawEnd = toMinutes(block.endTime)
+        .map((window) => {
+          const rawStart = toMinutes(window.startTime)
+          const rawEnd = toMinutes(window.endTime)
           if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return undefined
           return normalizeBlockWindow(rawStart, rawEnd, slotStart).end
         })

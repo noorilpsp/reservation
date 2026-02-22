@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useMemo } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { ListTopBar, type StatusTab, type ActiveFilter } from "./list-top-bar"
 import { ListDataTable } from "./list-data-table"
 import { ListMobileCards } from "./list-mobile-cards"
@@ -17,9 +18,24 @@ import {
 import { useMediaQuery } from "@/hooks/use-media-query"
 
 export function ListView() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  const startOfDay = useCallback((date: Date) => {
+    const next = new Date(date)
+    next.setHours(0, 0, 0, 0)
+    return next
+  }, [])
+
+  const getCurrentMinutes = useCallback(() => {
+    const now = new Date()
+    return now.getHours() * 60 + now.getMinutes()
+  }, [])
+
   // State
   const [searchQuery, setSearchQuery] = useState("")
-  const [activeStatus, setActiveStatus] = useState<StatusTab>("all")
+  const [activeStatuses, setActiveStatuses] = useState<ListReservationStatus[]>([])
   const [groupBy, setGroupBy] = useState<GroupByOption>("status")
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -27,6 +43,7 @@ export function ListView() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [focusedRowId, setFocusedRowId] = useState<string | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<Date>(() => startOfDay(new Date()))
 
   const isDesktop = useMediaQuery("(min-width: 768px)")
 
@@ -35,12 +52,14 @@ export function ListView() {
     let result = [...listReservations]
 
     // Status filter
-    if (activeStatus !== "all") {
-      if (activeStatus === "confirmed") {
-        result = result.filter((r) => r.status === "confirmed" || r.status === "unconfirmed")
-      } else {
-        result = result.filter((r) => r.status === activeStatus)
-      }
+    if (activeStatuses.length > 0) {
+      result = result.filter((r) => (
+        activeStatuses.some((status) => (
+          status === "confirmed"
+            ? r.status === "confirmed" || r.status === "unconfirmed"
+            : r.status === status
+        ))
+      ))
     }
 
     // Search filter
@@ -72,7 +91,7 @@ export function ListView() {
           break
         }
         case "time": {
-          const nowMin = 19 * 60 + 23 // 7:23 PM
+          const nowMin = getCurrentMinutes()
           result = result.filter((r) => {
             const [h, m] = r.time.split(":").map(Number)
             const resMin = h * 60 + m
@@ -104,7 +123,7 @@ export function ListView() {
     }
 
     return result
-  }, [searchQuery, activeStatus, activeFilters])
+  }, [activeFilters, activeStatuses, getCurrentMinutes, searchQuery])
 
   const summary = useMemo(() => getListSummary(listReservations), [])
   const filteredSummary = useMemo(() => getListSummary(filteredReservations), [filteredReservations])
@@ -123,6 +142,15 @@ export function ListView() {
   }, [])
 
   const handleClearFilters = useCallback(() => setActiveFilters([]), [])
+  const handleStatusFilter = useCallback((status: StatusTab) => {
+    setActiveStatuses((prev) => {
+      if (status === "all") return []
+      if (prev.includes(status)) {
+        return prev.filter((item) => item !== status)
+      }
+      return [...prev, status]
+    })
+  }, [])
 
   const handleToggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -172,6 +200,21 @@ export function ListView() {
     URL.revokeObjectURL(url)
   }, [filteredReservations])
 
+  const handleOpenNewReservation = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString())
+    const y = selectedDate.getFullYear()
+    const m = String(selectedDate.getMonth() + 1).padStart(2, "0")
+    const d = String(selectedDate.getDate()).padStart(2, "0")
+
+    next.set("action", "new")
+    next.set("date", `${y}-${m}-${d}`)
+    next.delete("id")
+    next.delete("detail")
+
+    const query = next.toString()
+    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [pathname, router, searchParams, selectedDate])
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {isDesktop ? (
@@ -180,9 +223,11 @@ export function ListView() {
             totalReservations={filteredSummary.totalRes}
             totalCovers={filteredSummary.totalCovers}
             statusCounts={summary.statusCounts}
+            selectedDate={selectedDate}
+            onSelectedDateChange={(date) => setSelectedDate(startOfDay(date))}
             onSearchChange={setSearchQuery}
-            onStatusFilter={setActiveStatus}
-            activeStatus={activeStatus}
+            onStatusFilter={handleStatusFilter}
+            activeStatuses={activeStatuses}
             onGroupByChange={setGroupBy}
             activeGroupBy={groupBy}
             activeFilters={activeFilters}
@@ -190,6 +235,7 @@ export function ListView() {
             onRemoveFilter={handleRemoveFilter}
             onClearFilters={handleClearFilters}
             onExport={handleExport}
+            onNewReservation={handleOpenNewReservation}
           />
           <ListDataTable
             reservations={filteredReservations}
@@ -212,8 +258,8 @@ export function ListView() {
           reservations={filteredReservations}
           groupBy={groupBy}
           onSearchChange={setSearchQuery}
-          activeStatus={activeStatus}
-          onStatusFilter={setActiveStatus}
+          activeStatuses={activeStatuses}
+          onStatusFilter={handleStatusFilter}
           onOpenDetail={handleOpenDetail}
         />
       )}

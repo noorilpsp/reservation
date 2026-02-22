@@ -201,7 +201,7 @@ export function ListDataTable({
     <div ref={tableRef} className="flex-1 overflow-auto" role="table" aria-label="Reservations list">
       {/* Table header */}
       <div
-        className="sticky top-0 z-10 grid grid-cols-[40px_60px_1fr_56px_72px_90px_72px_72px_64px_1fr_40px] items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-4 py-2 backdrop-blur-sm lg:px-6"
+        className="sticky top-0 z-10 grid grid-cols-[40px_repeat(9,minmax(0,1fr))_40px] items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-4 py-2 backdrop-blur-sm lg:px-6"
         role="row"
       >
         <div role="columnheader">
@@ -267,11 +267,12 @@ export function ListDataTable({
                   onClick={() => onOpenDetail(r)}
                   onMouseEnter={() => onFocusRow(r.id)}
                   className={cn(
-                    "group grid cursor-pointer grid-cols-[40px_60px_1fr_56px_72px_90px_72px_72px_64px_1fr_40px] items-center gap-2 border-b border-zinc-800/30 px-4 py-2 transition-colors lg:px-6",
+                    "group grid cursor-pointer grid-cols-[40px_repeat(9,minmax(0,1fr))_40px] items-center gap-2 border-b border-zinc-800/30 px-4 py-2 transition-colors lg:px-6",
                     "hover:bg-zinc-800/50",
                     isFocused && "bg-zinc-800/40",
                     isSelected && "bg-emerald-500/5",
-                    r.status === "arriving" && "list-arriving-row",
+                    statusBadge.rowClass,
+                    statusBadge.pulseClass,
                     idx < 20 && "list-row-stagger"
                   )}
                   style={{ "--row-index": idx } as React.CSSProperties}
@@ -299,7 +300,7 @@ export function ListDataTable({
                     {r.tags.some((t) => t.type === "anniversary") && <Heart className="h-3 w-3 shrink-0 text-rose-400 fill-rose-400" />}
                     <span className={cn(
                       "truncate text-xs font-medium",
-                      r.status === "cancelled" || r.status === "no-show" ? "text-zinc-500 line-through" : "text-foreground"
+                      statusBadge.nameClass ?? (r.status === "cancelled" || r.status === "no-show" ? "text-zinc-500 line-through" : "text-foreground")
                     )}>
                       {r.guestName}
                     </span>
@@ -322,9 +323,13 @@ export function ListDataTable({
                   <div role="cell">
                     <span className={cn(
                       "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      statusBadge.pillClass,
                       statusBadge.bgClass, statusBadge.textClass
-                    )}>
-                      <span className={cn("h-1.5 w-1.5 rounded-full", statusBadge.dotClass)} />
+                    )} style={{ borderStyle: statusBadge.borderStyle }}>
+                      <span
+                        className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", statusBadge.dotClass)}
+                        style={statusBadge.dotColor ? { backgroundColor: statusBadge.dotColor } : undefined}
+                      />
                       {statusBadge.label}
                     </span>
                   </div>
@@ -333,7 +338,7 @@ export function ListDataTable({
                   <div role="cell">
                     {r.status !== "completed" && r.status !== "cancelled" && (
                       <span className="flex items-center gap-1 text-[10px] text-zinc-400">
-                        <span className={cn("h-1.5 w-1.5 rounded-full", riskDisplay.dotClass)} />
+                        <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", riskDisplay.dotClass)} />
                         {riskDisplay.label}
                       </span>
                     )}

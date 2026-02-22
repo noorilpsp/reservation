@@ -2,6 +2,7 @@
 
 export type ListReservationStatus =
   | "arriving"
+  | "late"
   | "confirmed"
   | "unconfirmed"
   | "seated"
@@ -69,7 +70,7 @@ export interface ListReservation {
 // ── 32 reservations for Friday dinner service ────────────────────────────────
 
 export const listReservations: ListReservation[] = [
-  // ── ARRIVING NOW (2) ──
+  // ── ARRIVING NOW / LATE ──
   {
     id: "lv1",
     time: "19:30",
@@ -96,12 +97,13 @@ export const listReservations: ListReservation[] = [
     guestName: "Marcus Webb",
     partySize: 2,
     table: "T5",
-    status: "arriving",
-    risk: "medium",
+    status: "late",
+    risk: "high",
+    riskScore: 41,
     server: "Anna",
     zone: "Main",
     tags: [{ type: "first-timer", label: "First-timer" }],
-    notes: "Booked via Google, no confirmation response",
+    notes: "Guest called, running 12 minutes late",
     phone: "+1 (555) 876-5432",
     bookedVia: "Google",
     confirmationSent: false,
@@ -629,6 +631,7 @@ export const listReservations: ListReservation[] = [
 
 export const STATUS_GROUP_ORDER: ListReservationStatus[] = [
   "arriving",
+  "late",
   "confirmed",
   "unconfirmed",
   "seated",
@@ -640,6 +643,7 @@ export const STATUS_GROUP_ORDER: ListReservationStatus[] = [
 
 export const STATUS_GROUP_LABELS: Record<ListReservationStatus, string> = {
   arriving: "Arriving Now",
+  late: "Late",
   confirmed: "Upcoming",
   unconfirmed: "Upcoming",
   seated: "Seated",
@@ -666,14 +670,62 @@ export function getStatusBadge(status: ListReservationStatus, courseStage?: Cour
   bgClass: string
   textClass: string
   dotClass: string
+  dotColor?: string
+  pillClass?: string
+  rowClass?: string
+  cardClass?: string
+  pulseClass?: string
+  nameClass?: string
+  borderStyle?: string
 } {
   switch (status) {
     case "arriving":
-      return { label: "Arriving", bgClass: "bg-amber-500/15", textClass: "text-amber-300", dotClass: "bg-amber-400" }
+      return {
+        label: "Arriving now",
+        bgClass: "bg-amber-500/15",
+        textClass: "text-amber-300",
+        dotClass: "bg-amber-400",
+        dotColor: "#fcd34d",
+        pillClass: "border border-amber-400/35 shadow-[0_0_12px_rgba(245,158,11,0.2)]",
+        rowClass: "bg-amber-400/[0.14] shadow-[inset_3px_0_0_rgba(251,191,36,0.45)]",
+        cardClass: "bg-amber-500/15 border border-amber-500/30 border-l-[3px] border-l-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.2)]",
+        pulseClass: "tl-pulse-arriving-neon",
+      }
+    case "late":
+      return {
+        label: "Late",
+        bgClass: "bg-rose-500/15",
+        textClass: "text-rose-300",
+        dotClass: "bg-rose-400",
+        dotColor: "#fda4af",
+        pillClass: "border border-rose-400/35 shadow-[0_0_14px_rgba(244,63,94,0.25)]",
+        rowClass: "bg-rose-400/[0.16] shadow-[inset_3px_0_0_rgba(251,113,133,0.5)]",
+        cardClass: "bg-rose-500/15 border border-rose-500/30 border-l-[3px] border-l-rose-400 shadow-[0_0_14px_rgba(244,63,94,0.25)]",
+        pulseClass: "tl-pulse-late-neon",
+      }
     case "confirmed":
-      return { label: "Confirmed", bgClass: "bg-blue-500/15", textClass: "text-blue-300", dotClass: "bg-blue-400" }
+      return {
+        label: "Confirmed",
+        bgClass: "bg-cyan-500/15",
+        textClass: "text-cyan-300",
+        dotClass: "bg-cyan-400",
+        dotColor: "#67e8f9",
+        pillClass: "border border-cyan-400/35 shadow-[0_0_12px_rgba(6,182,212,0.2)]",
+        rowClass: "bg-cyan-400/[0.14] shadow-[inset_3px_0_0_rgba(34,211,238,0.45)]",
+        cardClass: "bg-cyan-500/15 border border-cyan-500/30 border-l-[3px] border-l-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.2)]",
+      }
     case "unconfirmed":
-      return { label: "Unconfirmed", bgClass: "bg-amber-500/15", textClass: "text-amber-300", dotClass: "bg-amber-400" }
+      return {
+        label: "Unconfirmed",
+        bgClass: "bg-violet-500/15",
+        textClass: "text-violet-300",
+        dotClass: "bg-violet-300",
+        dotColor: "#c4b5fd",
+        pillClass: "border border-violet-300/45 border-dashed shadow-[0_0_12px_rgba(139,92,246,0.2)]",
+        rowClass: "bg-violet-400/[0.14] shadow-[inset_3px_0_0_rgba(167,139,250,0.45)]",
+        cardClass: "bg-violet-400/[0.07] border-[1.5px] border-dashed border-violet-300/45 border-l-[3px] border-l-violet-400 [border-left-style:solid] shadow-[0_0_12px_rgba(139,92,246,0.2)]",
+        borderStyle: "dashed dashed dashed solid",
+      }
     case "seated": {
       const stageLabels: Record<CourseStage, string> = {
         ordering: "Ordering",
@@ -682,17 +734,63 @@ export function getStatusBadge(status: ListReservationStatus, courseStage?: Cour
         dessert: "Dessert",
         check: "Check",
       }
-      const stage = courseStage ? stageLabels[courseStage] : "Seated"
-      return { label: stage, bgClass: "bg-emerald-500/15", textClass: "text-emerald-300", dotClass: "bg-emerald-400" }
+      const stage = courseStage ? `Seated \u00b7 ${stageLabels[courseStage]}` : "Seated"
+      return {
+        label: stage,
+        bgClass: "bg-emerald-500/15",
+        textClass: "text-emerald-300",
+        dotClass: "bg-emerald-400",
+        dotColor: "#6ee7b7",
+        pillClass: "border border-emerald-400/35 shadow-[0_0_12px_rgba(16,185,129,0.2)]",
+        rowClass: "bg-emerald-400/[0.14] shadow-[inset_3px_0_0_rgba(52,211,153,0.45)]",
+        cardClass: "bg-emerald-500/15 border border-emerald-500/30 border-l-[3px] border-l-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]",
+      }
     }
     case "completed":
-      return { label: "Done", bgClass: "bg-zinc-500/15", textClass: "text-zinc-400", dotClass: "bg-zinc-500" }
+      return {
+        label: "Completed \u2713",
+        bgClass: "bg-zinc-700/10",
+        textClass: "text-zinc-500",
+        dotClass: "bg-zinc-500/70",
+        dotColor: "#71717a",
+        pillClass: "border border-zinc-600/30",
+        rowClass: "bg-zinc-500/[0.10] shadow-[inset_3px_0_0_rgba(161,161,170,0.35)] opacity-85",
+        cardClass: "bg-zinc-700/10 border border-zinc-600/20 border-l-[3px] border-l-zinc-600/30",
+      }
     case "no-show":
-      return { label: "No-Show", bgClass: "bg-rose-500/15", textClass: "text-rose-300", dotClass: "bg-rose-400" }
+      return {
+        label: "No-Show \u2717",
+        bgClass: "bg-rose-500/10",
+        textClass: "text-rose-300/80",
+        dotClass: "bg-rose-500",
+        dotColor: "rgba(253, 164, 175, 0.8)",
+        pillClass: "border border-rose-400/30",
+        rowClass: "bg-gradient-to-r from-rose-400/[0.14] to-zinc-700/[0.06] shadow-[inset_3px_0_0_rgba(244,63,94,0.4)]",
+        cardClass: "bg-gradient-to-r from-rose-500/10 to-zinc-700/10 border border-rose-500/20 border-l-[3px] border-l-rose-500/30",
+        nameClass: "line-through text-zinc-500",
+      }
     case "cancelled":
-      return { label: "Cancelled", bgClass: "bg-zinc-500/15", textClass: "text-zinc-500", dotClass: "bg-zinc-600" }
+      return {
+        label: "Cancelled",
+        bgClass: "bg-zinc-700/10",
+        textClass: "text-zinc-500",
+        dotClass: "bg-zinc-600",
+        dotColor: "#52525b",
+        pillClass: "border border-zinc-600/25",
+        rowClass: "bg-zinc-500/[0.12] shadow-[inset_3px_0_0_rgba(113,113,122,0.4)] opacity-90",
+        cardClass: "bg-zinc-700/10 border border-zinc-600/20",
+      }
     case "waitlist":
-      return { label: "Waitlist", bgClass: "bg-purple-500/15", textClass: "text-purple-300", dotClass: "bg-purple-400" }
+      return {
+        label: "Waitlist",
+        bgClass: "bg-orange-500/15",
+        textClass: "text-orange-300",
+        dotClass: "bg-orange-300",
+        dotColor: "#fdba74",
+        pillClass: "border border-orange-400/30",
+        rowClass: "bg-orange-400/[0.14] shadow-[inset_3px_0_0_rgba(251,146,60,0.45)]",
+        cardClass: "bg-orange-500/12 border border-orange-500/25",
+      }
   }
 }
 
@@ -777,7 +875,7 @@ export function groupReservations(
 
   // Sort groups
   if (groupBy === "status") {
-    const groupOrder = ["Arriving Now", "Upcoming", "Seated", "Completed", "No-Shows", "Cancelled", "Waitlist"]
+    const groupOrder = ["Waitlist", "Arriving Now", "Late", "Upcoming", "Seated", "Completed", "No-Shows", "Cancelled"]
     return groupOrder
       .filter((label) => map.has(label))
       .map((label) => ({ label, reservations: map.get(label)! }))

@@ -1,6 +1,5 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import {
   Armchair,
   ChevronDown,
@@ -16,6 +15,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,14 +25,13 @@ import {
 import {
   type WaitlistEntry,
   getElapsedMinutes,
-  getProgressPct,
-  getProgressStatus,
   getLocationLabel,
 } from "@/lib/waitlist-data"
 
 interface WaitlistCardProps {
   entry: WaitlistEntry
   position: number
+  elapsedOffset: number
   isExpanded: boolean
   onToggleExpand: () => void
   onOpenDetail: () => void
@@ -45,6 +44,7 @@ interface WaitlistCardProps {
 export function WaitlistCard({
   entry,
   position,
+  elapsedOffset,
   isExpanded,
   onToggleExpand,
   onOpenDetail,
@@ -53,17 +53,13 @@ export function WaitlistCard({
   onRemove,
   onConvert,
 }: WaitlistCardProps) {
-  const [elapsed, setElapsed] = useState(getElapsedMinutes(entry))
-  const progressPct = getProgressPct(entry)
-  const status = getProgressStatus(entry)
-
-  // Live ticking timer
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsed((prev) => prev + 1)
-    }, 60_000)
-    return () => clearInterval(interval)
-  }, [])
+  const elapsed = getElapsedMinutes(entry) + elapsedOffset
+  const quoted = Math.max(entry.quotedWait, 1)
+  const waitRatio = elapsed / quoted
+  const progressPct = Math.round(waitRatio * 100)
+  const progressBarPct = Math.min(progressPct, 100)
+  const status: "normal" | "warning" | "overdue" =
+    waitRatio >= 1 ? "overdue" : waitRatio >= 0.7 ? "warning" : "normal"
 
   const hasMatch = entry.bestMatch !== null
   const isReadyNow = entry.bestMatch?.status === "ready-now"
@@ -73,14 +69,32 @@ export function WaitlistCard({
       : status === "warning"
         ? "bg-amber-500"
         : "bg-emerald-500"
+  const shellTone = isReadyNow
+    ? "border-emerald-500/45 shadow-[0_0_18px_rgba(16,185,129,0.12)]"
+    : status === "overdue"
+      ? "border-rose-500/35 shadow-[0_0_18px_rgba(244,63,94,0.12)]"
+      : status === "warning"
+        ? "border-amber-500/30 shadow-[0_0_16px_rgba(245,158,11,0.1)]"
+        : "border-zinc-800/60 hover:border-zinc-700/70"
+  const accentTone = isReadyNow
+    ? "bg-emerald-400"
+    : status === "overdue"
+      ? "bg-rose-400"
+      : status === "warning"
+        ? "bg-amber-400"
+        : "bg-cyan-400/70"
+  const stateLabel = isReadyNow
+    ? "Ready now"
+    : hasMatch
+      ? "Queued match"
+      : "No table yet"
 
   return (
     <div
-      className={`wl-card group rounded-xl border bg-zinc-900/80 backdrop-blur-sm transition-all ${
-        isReadyNow
-          ? "border-emerald-500/40 shadow-[0_0_16px_rgba(16,185,129,0.1)]"
-          : "border-zinc-800/50 hover:border-zinc-700/60"
-      }`}
+      className={cn(
+        "wl-card group relative overflow-hidden rounded-xl border bg-zinc-900/85 backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5",
+        shellTone
+      )}
       role="article"
       aria-label={`Waitlist position ${position}, ${entry.name}, ${entry.partySize} guests`}
       tabIndex={0}
@@ -88,13 +102,16 @@ export function WaitlistCard({
         if (e.key === "Enter") onOpenDetail()
       }}
     >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_0%_0%,rgba(255,255,255,0.08),transparent_45%)] opacity-60" />
+      <div className={cn("pointer-events-none absolute inset-y-0 left-0 w-[3px]", accentTone)} />
+
       {/* Header row */}
       <div
-        className="flex cursor-pointer items-start justify-between gap-3 px-4 pt-4"
+        className="relative z-10 flex cursor-pointer items-start justify-between gap-3 px-4 pt-3.5"
         onClick={onOpenDetail}
       >
         <div className="flex items-center gap-3">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-zinc-800 text-xs font-bold text-zinc-300">
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-800/90 text-xs font-bold text-zinc-200">
             {position}
           </span>
           <div>
@@ -117,6 +134,21 @@ export function WaitlistCard({
           <Badge variant="outline" className="border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-200">
             {entry.partySize}p
           </Badge>
+          <Badge
+            variant="outline"
+            className={cn(
+              "hidden border text-[10px] font-semibold sm:inline-flex",
+              isReadyNow
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                : status === "overdue"
+                  ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  : hasMatch
+                    ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+                    : "border-zinc-700 bg-zinc-800/60 text-zinc-400"
+            )}
+          >
+            {stateLabel}
+          </Badge>
           <button
             type="button"
             className="text-zinc-500 hover:text-zinc-300"
@@ -132,7 +164,7 @@ export function WaitlistCard({
       </div>
 
       {/* Timer + Progress bar */}
-      <div className="px-4 pt-3">
+      <div className="relative z-10 px-4 pt-2.5">
         <div className="flex items-center justify-between text-xs">
           <span className="flex items-center gap-1 text-zinc-400">
             <Clock className="h-3 w-3" />
@@ -142,29 +174,31 @@ export function WaitlistCard({
             Quoted: <span className="text-zinc-300">{entry.quotedWait} min</span>
           </span>
         </div>
-        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full border border-zinc-800 bg-zinc-900/80">
           <div
             className={`h-full rounded-full transition-all duration-1000 ${barColor} ${
               status === "overdue" ? "wl-overdue-pulse" : ""
             }`}
-            style={{ width: `${Math.min(progressPct, 100)}%` }}
+            style={{ width: `${progressBarPct}%` }}
             role="progressbar"
-            aria-valuenow={progressPct}
+            aria-valuenow={progressBarPct}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuetext={`${elapsed} of ${entry.quotedWait} minutes waited`}
           />
         </div>
-        <div className="mt-1 text-right text-[10px] text-zinc-600">{progressPct}%</div>
+        <div className="mt-1 flex items-center justify-end text-[10px] text-zinc-600">
+          <span>{progressPct}%</span>
+        </div>
       </div>
 
       {/* Match section */}
       {hasMatch && (
         <div
-          className={`mx-4 mt-1 rounded-lg border px-3 py-2 ${
+          className={`relative z-10 mx-4 mt-1.5 rounded-lg border px-3 py-2 ${
             isReadyNow
               ? "wl-match-pulse border-emerald-500/30 bg-emerald-500/10"
-              : "border-zinc-800/50 bg-zinc-800/30"
+              : "border-cyan-500/20 bg-cyan-500/5"
           }`}
         >
           <div className="flex items-center gap-1.5 text-xs">
@@ -205,7 +239,7 @@ export function WaitlistCard({
       )}
 
       {!hasMatch && (
-        <div className="mx-4 mt-1 rounded-lg border border-zinc-800/40 bg-zinc-800/20 px-3 py-2">
+        <div className="relative z-10 mx-4 mt-1.5 rounded-lg border border-zinc-800/50 bg-zinc-800/30 px-3 py-2">
           <div className="flex items-center gap-1.5 text-xs text-zinc-500">
             <Clock className="h-3 w-3" />
             No immediate match &mdash; est. {entry.quotedWait - elapsed > 0 ? `${entry.quotedWait - elapsed}-${entry.quotedWait - elapsed + 5}` : "5-10"} min
@@ -221,7 +255,7 @@ export function WaitlistCard({
 
       {/* Merge option for matched cards */}
       {hasMatch && entry.mergeOption && (
-        <div className="mx-4 mt-1 text-[10px] text-zinc-500">
+        <div className="relative z-10 mx-4 mt-1 text-[10px] text-zinc-500">
           <Utensils className="mr-1 inline h-3 w-3 text-zinc-600" />
           Could merge {entry.mergeOption.tables.join("+")} &mdash; available {entry.mergeOption.estTime}
         </div>
@@ -229,7 +263,7 @@ export function WaitlistCard({
 
       {/* Expanded details */}
       {isExpanded && (
-        <div className="wl-expand-in mt-2 border-t border-zinc-800/40 px-4 py-3">
+        <div className="wl-expand-in relative z-10 mt-2 border-t border-zinc-800/40 px-4 py-3">
           <div className="grid grid-cols-2 gap-2 text-xs">
             {entry.phone && (
               <div className="flex items-center gap-1.5 text-zinc-400">
@@ -276,7 +310,7 @@ export function WaitlistCard({
       )}
 
       {/* Actions row */}
-      <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-2">
+      <div className="relative z-10 flex items-center justify-between gap-2 px-4 pb-3 pt-2">
         <div className="flex flex-wrap items-center gap-1.5">
           {isReadyNow && (
             <Button

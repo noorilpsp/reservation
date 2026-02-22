@@ -219,6 +219,7 @@ export function TimelineView() {
           zoneFilter={zoneFilter}
           partySizeFilter={partySizeFilter}
           showGhosts={showGhosts}
+          detailOpen={detailOpen}
           onScrollChange={handleScrollChange}
           scrollContainerRef={scrollContainerRef}
           onBlockClick={handleBlockClick}

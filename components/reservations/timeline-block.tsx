@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import type { PointerEvent } from "react"
+import { useEffect, useRef, useState, type PointerEvent } from "react"
+import { Clock } from "lucide-react"
 import {
   Tooltip,
   TooltipContent,
@@ -22,7 +23,8 @@ import {
   type MergedBlock,
   type ZoomLevel,
   getBlockColor,
-  getRiskDot,
+  getPartiallySeatedRatio,
+  getStatusDot,
   getStatusLabel,
   formatTime24h,
   timeToOffset,
@@ -37,6 +39,7 @@ interface ReservationBlockProps {
   slotWidth?: number
   onClick: (block: TBlock) => void
   axisStart: string
+  disableHoverScale?: boolean
   onDragStart?: (event: PointerEvent<HTMLDivElement>, block: TBlock) => void
   onResizeStart?: (event: PointerEvent<HTMLDivElement>, block: TBlock) => void
   isGhosted?: boolean
@@ -55,33 +58,56 @@ export function ReservationBlock({
   slotWidth,
   onClick,
   axisStart,
+  disableHoverScale = false,
   onDragStart,
   onResizeStart,
   isGhosted = false,
   isInvalidDrop = false,
 }: ReservationBlockProps) {
+  const [isPressFeedbackActive, setIsPressFeedbackActive] = useState(false)
+  const pressFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const startOff = timeToOffset(block.startTime, axisStart)
   const endOff = timeToOffset(block.endTime, axisStart)
   const leftPx = offsetToPixelAdaptive(startOff, zoom, slotWidth)
   const widthPx = offsetToPixelAdaptive(endOff - startOff, zoom, slotWidth)
-  const colors = getBlockColor(block.status)
+  const colors = getBlockColor(block)
+  const dot = getStatusDot(block)
+  const partialRatio = getPartiallySeatedRatio(block)
   const statusLabel = getStatusLabel(block)
-  const isPast = block.status === "completed"
-  const isLate = block.status === "late"
+  const isNoShow = block.status === "no-show"
 
   // Tag icons
   const tagIcons = block.tags.map((t) => {
     switch (t.type) {
-      case "vip":        return { symbol: "\u2605", color: "text-amber-400", label: t.label }
-      case "allergy":    return { symbol: "\u26A0", color: "text-rose-400", label: t.label }
-      case "birthday":   return { symbol: "\uD83C\uDF82", color: "text-pink-400", label: t.label }
-      case "anniversary": return { symbol: "\uD83D\uDC8D", color: "text-purple-400", label: t.label }
-      case "first-timer": return { symbol: "\u2726", color: "text-blue-400", label: t.label }
-      default:           return { symbol: "\u25CF", color: "text-zinc-400", label: t.label }
+      case "vip":        return { symbol: "\u2605", label: t.label }
+      case "allergy":    return { symbol: "\uD83E\uDD90", label: t.label }
+      case "birthday":   return { symbol: "\uD83C\uDF82", label: t.label }
+      case "anniversary": return { symbol: "\uD83D\uDC8D", label: t.label }
+      case "first-timer": return { symbol: "\u2726", label: t.label }
+      default:           return { symbol: "\u25CF", label: t.label }
     }
   })
 
   const mergeLabel = block.mergedWith ? `${block.table}+${block.mergedWith} MERGED` : null
+
+  useEffect(() => {
+    return () => {
+      if (pressFeedbackTimerRef.current) {
+        clearTimeout(pressFeedbackTimerRef.current)
+      }
+    }
+  }, [])
+
+  const triggerPressFeedback = () => {
+    setIsPressFeedbackActive(true)
+    if (pressFeedbackTimerRef.current) {
+      clearTimeout(pressFeedbackTimerRef.current)
+    }
+    pressFeedbackTimerRef.current = setTimeout(() => {
+      setIsPressFeedbackActive(false)
+      pressFeedbackTimerRef.current = null
+    }, 140)
+  }
 
   return (
     <ContextMenu>
@@ -92,21 +118,23 @@ export function ReservationBlock({
               role="button"
               tabIndex={0}
               className={cn(
-                "tl-block absolute top-1 bottom-1 rounded-md border-l-[3px] backdrop-blur-sm",
-                "transition-shadow duration-150",
-                "hover:shadow-lg hover:shadow-black/30 hover:z-10",
+                "tl-block absolute top-1 bottom-1 rounded-[8px] transform-gpu",
+                "transition-[transform,box-shadow] duration-120",
+                !disableHoverScale && "hover:z-10 hover:scale-[1.05]",
+                "active:scale-[1.05]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:ring-offset-1 focus-visible:ring-offset-zinc-950",
                 onDragStart ? "cursor-grab active:cursor-grabbing touch-none" : "cursor-pointer",
-                colors.bg,
-                colors.border,
-                isPast && "opacity-50",
-                isLate && "tl-pulse-late",
+                colors.container,
+                colors.withBlur && "backdrop-blur-sm",
+                colors.pulse,
+                isPressFeedbackActive && "z-10 scale-[1.05]",
                 isGhosted && "opacity-85 z-40 ring-1 ring-cyan-300/50 shadow-xl shadow-black/40",
                 isInvalidDrop && "ring-1 ring-rose-400/60"
               )}
               style={{
                 left: leftPx,
                 width: Math.max(widthPx, 40),
+                borderStyle: colors.borderStyle,
               }}
               onClick={() => {
                 if (!onDragStart) onClick(block)
@@ -114,31 +142,45 @@ export function ReservationBlock({
               onPointerDown={(event) => {
                 if (!event.isPrimary) return
                 if (event.pointerType !== "touch" && event.button !== 0) return
+                triggerPressFeedback()
                 onDragStart?.(event, block)
               }}
               onKeyDown={(e) => { if (e.key === "Enter") onClick(block) }}
               aria-label={`${block.guestName}, party of ${block.partySize}, ${block.table}, ${formatTime24h(block.startTime)}, ${statusLabel}${block.tags.map(t => `, ${t.label}`).join("")}`}
             >
-              <div className="flex h-full flex-col justify-between overflow-hidden px-2 py-1">
+              {partialRatio !== null && (
+                <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[8px]">
+                  <div className="absolute inset-y-0 left-0 bg-emerald-500/15" style={{ width: `${partialRatio}%` }} />
+                  <div className="absolute inset-y-0 right-0 bg-cyan-500/15" style={{ width: `${100 - partialRatio}%` }} />
+                  <div className="absolute inset-y-0 w-px bg-zinc-600/70" style={{ left: `${partialRatio}%` }} />
+                </div>
+              )}
+              <div className="relative z-10 flex h-full flex-col justify-between overflow-hidden px-2 py-1">
                 {/* Top row: name, party size, risk dot */}
                 <div className="flex items-center gap-1 min-w-0">
                   <span className={cn(
                     "truncate text-[11px] font-semibold leading-tight",
-                    isPast ? "text-zinc-400 line-through" : "text-foreground"
+                    isNoShow && "line-through",
+                    colors.text
                   )}>
                     {block.guestName}
                   </span>
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                  <span className={cn("shrink-0 text-[10px]", colors.text)}>
                     ({block.partySize})
                   </span>
-                  <span className={cn("ml-auto h-2 w-2 shrink-0 rounded-full", getRiskDot(block.risk))} />
+                  <span className="relative ml-auto h-2.5 w-2.5 shrink-0">
+                    <span className={cn("absolute inset-0 rounded-full", dot.className)} style={dot.style} />
+                    {dot.pulseClass && (
+                      <span className={cn("absolute -inset-1.5 rounded-full", dot.pulseClass)} />
+                    )}
+                  </span>
                 </div>
 
                 {/* Middle: status */}
                 <div className="flex items-center gap-1 min-w-0">
-                  <span className={cn("truncate text-[10px]", colors.text)}>
+                  {block.status === "late" && <Clock className="h-2.5 w-2.5 shrink-0 text-rose-300" />}
+                  <span className={cn("truncate text-[10px]", colors.statusText)}>
                     {statusLabel}
-                    {isPast && " \u2713"}
                   </span>
                 </div>
 
@@ -146,7 +188,7 @@ export function ReservationBlock({
                 {(tagIcons.length > 0 || mergeLabel) && (
                   <div className="flex items-center gap-1 min-w-0">
                     {tagIcons.map((t, i) => (
-                      <span key={i} className={cn("text-[10px]", t.color)} title={t.label}>
+                      <span key={i} className="text-[10px] text-zinc-100/95" title={t.label}>
                         {t.symbol}
                       </span>
                     ))}
@@ -189,7 +231,7 @@ export function ReservationBlock({
               <p className="font-semibold">{block.guestName} ({block.partySize})</p>
               <p>{block.table}{block.mergedWith ? ` + ${block.mergedWith}` : ""}</p>
               <p>{formatTime24h(block.startTime)} - {formatTime24h(block.endTime)}</p>
-              <p className={colors.text}>{statusLabel}</p>
+              <p className={colors.statusText}>{statusLabel}</p>
               {block.tags.map((t, i) => (
                 <p key={i} className="text-muted-foreground">{t.label}{t.detail ? `: ${t.detail}` : ""}</p>
               ))}
@@ -239,16 +281,16 @@ export function GhostBlockComponent({ ghost, zoom, slotWidth, axisStart }: Ghost
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="tl-ghost-block absolute top-1.5 bottom-1.5 cursor-pointer rounded-md border border-dashed border-zinc-600/50 bg-zinc-600/10 backdrop-blur-[2px] hover:border-zinc-500/60 hover:bg-zinc-600/15"
+          className="tl-ghost-block absolute top-1.5 bottom-1.5 cursor-pointer rounded-md border border-dotted border-zinc-500/20 bg-transparent hover:border-zinc-500/35"
           style={{ left: leftPx, width: Math.max(widthPx, 40) }}
           aria-label={`Predicted available slot: ${ghost.label}`}
         >
           <div className="flex h-full flex-col items-center justify-center px-2 text-center">
-            <span className="text-[10px] text-zinc-500">{ghost.label}</span>
+            <span className="text-[10px] italic text-zinc-400/50">{ghost.label}</span>
             {ghost.conditional && (
-              <span className="text-[9px] text-zinc-600">({ghost.conditional})</span>
+              <span className="text-[9px] italic text-zinc-500/45">({ghost.conditional})</span>
             )}
-            <span className="mt-0.5 text-[9px] text-zinc-600">(predicted)</span>
+            <span className="mt-0.5 text-[9px] italic text-zinc-500/45">(predicted)</span>
           </div>
         </button>
       </TooltipTrigger>
@@ -281,11 +323,11 @@ export function MergedBlockComponent({ merged, zoom, slotWidth, axisStart }: Mer
 
   return (
     <div
-      className="absolute top-1 bottom-1 rounded-md border border-dashed border-zinc-700/30 bg-zinc-800/20"
+      className="absolute top-1 bottom-1 rounded-[8px] border border-zinc-600/35 bg-zinc-700/20"
       style={{ left: leftPx, width: widthPx }}
     >
       <div className="flex h-full items-center justify-center">
-        <span className="text-[10px] text-zinc-600">
+        <span className="text-[10px] text-zinc-500">
           MERGED WITH {merged.mergedWith}
         </span>
       </div>
