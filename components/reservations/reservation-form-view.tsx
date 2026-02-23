@@ -137,9 +137,10 @@ function normalizeBlockWindow(blockStart: number, blockEnd: number, anchor: numb
   return { start, end }
 }
 
-function getBlockingWindowsForTable(tableId: string): BlockingWindow[] {
+function getBlockingWindowsForTable(tableId: string, selectedDate?: string): BlockingWindow[] {
   const reservationWindows = getBlocksForTable(tableId)
-    .filter((block) => block.status !== "unconfirmed")
+    .filter((block) => !selectedDate || !block.date || block.date === selectedDate)
+    .filter((block) => !["unconfirmed", "completed", "no-show", "cancelled"].includes(block.status))
     .map((block) => ({
       startTime: block.startTime,
       endTime: block.endTime,
@@ -272,7 +273,8 @@ function getOpenTimes(baseTime: string, servicePeriodId?: string, selectedDate?:
 function getContinuousWindowMetaForTable(
   tableId: string,
   startTime: string,
-  servicePeriodId?: string
+  servicePeriodId?: string,
+  selectedDate?: string
 ): {
   availableMinutes: number
   boundaryKind: "none" | "service-end" | "next-reservation"
@@ -295,7 +297,7 @@ function getContinuousWindowMetaForTable(
     return normalized
   }
 
-  const blockingWindows = getBlockingWindowsForTable(tableId)
+  const blockingWindows = getBlockingWindowsForTable(tableId, selectedDate)
 
   const hasOverlapAtStart = blockingWindows.some((window) => {
     const rawStart = toMinutes(window.startTime)
@@ -354,7 +356,7 @@ function getAvailableTimesForTable(
   if (!tableId) return openTimes
 
   return openTimes.filter((time) => {
-    const window = getContinuousWindowMetaForTable(tableId, time, servicePeriodId)
+    const window = getContinuousWindowMetaForTable(tableId, time, servicePeriodId, selectedDate)
     return window.availableMinutes >= duration
   })
 }
@@ -366,7 +368,7 @@ function pickNearestAvailableTime(currentTime: string, options: string[]): strin
   return sorted.find((time) => toMinutes(time) >= currentMin) ?? sorted[0]
 }
 
-function resolveDurationConstraints(time: string, tableId: string | null, partySize: number, servicePeriodId?: string) {
+function resolveDurationConstraints(time: string, tableId: string | null, partySize: number, servicePeriodId?: string, selectedDate?: string) {
   const recommended = getDurationForParty(partySize)
   if (!tableId) {
     return { durationDefault: recommended, durationMax: undefined as number | undefined }
@@ -379,7 +381,7 @@ function resolveDurationConstraints(time: string, tableId: string | null, partyS
   const normalize = (min: number) => (min < selectedMin ? min + 24 * 60 : min)
   const selectedNormalized = normalize(selectedMin)
 
-  const nextReservationStart = getBlockingWindowsForTable(tableId)
+  const nextReservationStart = getBlockingWindowsForTable(tableId, selectedDate)
     .map((window) => {
       const start = toMinutes(window.startTime)
       return Number.isFinite(start) ? normalize(start) : undefined
@@ -413,7 +415,7 @@ function isTableAvailableForWindow(tableId: string, startTime: string, duration:
   if (!Number.isFinite(selectedStart)) return false
   const selectedEnd = selectedStart + duration
 
-  return !getBlockingWindowsForTable(tableId).some((window) => {
+  return !getBlockingWindowsForTable(tableId, undefined).some((window) => {
     const rawStart = toMinutes(window.startTime)
     const rawEnd = toMinutes(window.endTime)
     if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return false
@@ -428,7 +430,8 @@ function buildTimeFitMap(
   zonePreference: string,
   duration: number,
   assignedTable: string | null,
-  servicePeriodId?: string
+  servicePeriodId?: string,
+  selectedDate?: string
 ): Record<string, TimeFitSnapshot> {
   const eligibleTables = assignedTable
     ? timelineTableLanes.filter((lane) => lane.id === assignedTable && lane.seats >= partySize)
@@ -450,7 +453,7 @@ function buildTimeFitMap(
       return acc
     }
 
-    const windows = eligibleTables.map((lane) => getContinuousWindowMetaForTable(lane.id, time, servicePeriodId))
+    const windows = eligibleTables.map((lane) => getContinuousWindowMetaForTable(lane.id, time, servicePeriodId, selectedDate))
     const available = windows.filter((window) => window.availableMinutes >= duration).length
     const shortWindows = windows.filter((window) => window.availableMinutes >= 15 && window.availableMinutes < duration)
     const shortCount = shortWindows.length
@@ -580,8 +583,8 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
   const [showSidePanel, setShowSidePanel] = useState(true)
 
   const dynamicConstraints = useMemo(
-    () => resolveDurationConstraints(form.time, form.assignedTable, form.partySize, servicePeriodId),
-    [form.time, form.assignedTable, form.partySize, servicePeriodId]
+    () => resolveDurationConstraints(form.time, form.assignedTable, form.partySize, servicePeriodId, form.date),
+    [form.time, form.assignedTable, form.partySize, servicePeriodId, form.date]
   )
   const availableTimes = useMemo(
     () => getAvailableTimesForTable(form.assignedTable, form.time, form.duration, servicePeriodId, form.date),
@@ -592,8 +595,8 @@ export function ReservationFormView({ mode = "create", prefill, onRequestClose }
     [form.date, form.time, servicePeriodId]
   )
   const timeFitByTime = useMemo(
-    () => buildTimeFitMap(openTimes, form.partySize, form.zonePreference, form.duration, form.assignedTable, servicePeriodId),
-    [form.assignedTable, form.duration, form.partySize, form.zonePreference, openTimes, servicePeriodId]
+    () => buildTimeFitMap(openTimes, form.partySize, form.zonePreference, form.duration, form.assignedTable, servicePeriodId, form.date),
+    [form.assignedTable, form.date, form.duration, form.partySize, form.zonePreference, openTimes, servicePeriodId]
   )
   const fitContextLabel = useMemo(
     () => `${ZONE_LABELS[form.zonePreference] ?? "All zones"} · ${form.partySize}p`,

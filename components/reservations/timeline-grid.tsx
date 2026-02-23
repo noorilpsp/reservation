@@ -223,11 +223,22 @@ export function TimelineGrid({
       filteredZones.map((zone) => {
         const tables = getTablesForZone(zone.id).filter((table) => {
           if (partySizeFilter === "all") return true
-          return displayedBlocks.some((block) => (
+          // Show table if it has a direct block matching the party filter
+          if (displayedBlocks.some((block) => (
             block.table === table.id
             && matchesPartyFilter(block.partySize)
             && overlapsService(block.startTime, block.endTime)
-          ))
+          ))) return true
+          // Also show merge-slave tables whose primary table has a matching block
+          const merge = getMergedForTable(table.id)
+          if (merge) {
+            return displayedBlocks.some((block) => (
+              block.table === merge.mergedWith
+              && matchesPartyFilter(block.partySize)
+              && overlapsService(block.startTime, block.endTime)
+            ))
+          }
+          return false
         })
         return [zone.id, tables]
       })

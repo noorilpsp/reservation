@@ -94,6 +94,10 @@ export function TimelineView() {
     ?? restaurantConfig.servicePeriods[0]
   const isSelectedDateToday = isSameLocalDay(selectedDate, new Date())
   const nowTimeForTimeline = isSelectedDateToday ? currentTime : null
+  const selectedIsoDate = toIsoDate(selectedDate)
+  const displayedBlocks = isSelectedDateToday
+    ? blocks
+    : blocks.filter((b) => b.date === selectedIsoDate)
 
   const handleBlockClick = useCallback((block: TimelineBlock) => {
     setSelectedBlock(block)
@@ -202,7 +206,7 @@ export function TimelineView() {
 
       {isMobile ? (
         <TimelineMobile
-          blocks={blocks}
+          blocks={displayedBlocks}
           zoneFilter={zoneFilter}
           onZoneFilterChange={setZoneFilter}
           partySizeFilter={partySizeFilter}
@@ -214,7 +218,7 @@ export function TimelineView() {
         />
       ) : (
         <TimelineGrid
-          blocks={blocks}
+          blocks={displayedBlocks}
           zoom={zoom}
           zoneFilter={zoneFilter}
           partySizeFilter={partySizeFilter}

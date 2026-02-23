@@ -80,11 +80,22 @@ export function TimelineMobile({
     : tableLanes.filter((t) => t.zone === zoneFilter)
   ).filter((table) => {
     if (partySizeFilter === "all") return true
-    return blocks.some((block) => (
+    // Show table if it has a direct block matching the party filter
+    if (blocks.some((block) => (
       block.table === table.id
       && matchesPartyFilter(block.partySize)
       && overlapsService(block.startTime, block.endTime)
-    ))
+    ))) return true
+    // Also show merge-slave tables whose primary table has a matching block
+    const merge = getMergedForTable(table.id)
+    if (merge) {
+      return blocks.some((block) => (
+        block.table === merge.mergedWith
+        && matchesPartyFilter(block.partySize)
+        && overlapsService(block.startTime, block.endTime)
+      ))
+    }
+    return false
   })
 
   const [currentIndex, setCurrentIndex] = useState(0)

@@ -36,6 +36,7 @@ export interface TimelineBlock {
   mergedWith?: string          // e.g. "T9" if this block also uses T9
   startTime: string            // "HH:MM"
   endTime: string              // "HH:MM"
+  date?: string                // ISO date "YYYY-MM-DD" — which service day this block belongs to
   status: TimelineStatus
   risk: "low" | "medium" | "high"
   riskScore?: number
@@ -197,6 +198,14 @@ export function getTimelineCapacity(): CapacitySlot[] {
 }
 
 // ── Mock Timeline Blocks ─────────────────────────────────────────────────────
+
+/** ISO date for the current service day — used to stamp demo blocks so that
+ *  availability calculations can correctly scope reservations to today. */
+function getTodayIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+const TODAY = getTodayIso()
 
 export const timelineBlocks: TimelineBlock[] = [
   // Completed
@@ -908,6 +917,8 @@ function buildNonOverlappingBlocksCache(): Map<string, TimelineBlock[]> {
         ...block,
         startTime: toTime24(adjustedStart),
         endTime: toTime24(adjustedEnd),
+        // Stamp blocks with the current service day so availability can filter by date
+        date: block.date ?? TODAY,
       }
     })
 
